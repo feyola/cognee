@@ -52,7 +52,7 @@ class PGVectorDatasetDatabaseHandler(DatasetDatabaseHandlerInterface):
             vector_dataset_database_handler="pgvector",
         )
         async with new_vector_engine.engine.begin() as connection:
-            await connection.execute(text("CREATE EXTENSION IF NOT EXISTS vector;"))
+            await connection.execute(text("CREATE EXTENSION IF NOT EXISTS vchord CASCADE;"))
 
         return {
             "vector_database_provider": vector_config.vector_db_provider,

@@ -568,7 +568,7 @@ class SQLAlchemyAdapter:
                 vector_config.vector_db_provider == "pgvector"
                 and self.engine.dialect.name == "postgresql"
             ):
-                await connection.execute(text("CREATE EXTENSION IF NOT EXISTS vector;"))
+                await connection.execute(text("CREATE EXTENSION IF NOT EXISTS vchord CASCADE;"))
             if len(Base.metadata.tables.keys()) > 0:
                 await connection.run_sync(Base.metadata.create_all)
 

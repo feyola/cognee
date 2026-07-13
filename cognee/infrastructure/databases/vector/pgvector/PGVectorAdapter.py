@@ -1,10 +1,13 @@
 import asyncio
+import os
+import re
+import zlib
 from typing import Any, Dict, List, Optional, get_type_hints
 from uuid import UUID
 from sqlalchemy.inspection import inspect
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.dialects.postgresql import insert
-from sqlalchemy import JSON, Column, Table, select, delete, MetaData, func, text
+from sqlalchemy import JSON, Column, Table, select, delete, MetaData, func, text, cast
 from sqlalchemy import exc
 from sqlalchemy.exc import DBAPIError, ProgrammingError
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
@@ -32,6 +35,7 @@ from .serialize_data import serialize_data
 
 logger = get_logger("PGVectorAdapter")
 QUERY_BATCH_SIZE = 1000
+PGVECTOR_INDEX_DIMENSION_LIMIT = 2000
 
 # Default pool sizing for per-dataset PGVector engines when ENABLE_BACKEND_ACCESS_CONTROL=True.
 # Much smaller than the relational default (20+20) to limit connection fan-out across datasets.
@@ -137,8 +141,9 @@ class PGVectorAdapter(SQLAlchemyAdapter, VectorDBInterface):
 
         # Has to be imported at class level
         # Functions reading tables from database need to know what a Vector column type is
-        from pgvector.sqlalchemy import Vector
+        from pgvector.sqlalchemy import HALFVEC, Vector
 
+        self.HALFVEC = HALFVEC
         self.Vector = Vector
 
     def reset_metadata_cache(self):
@@ -166,6 +171,72 @@ class PGVectorAdapter(SQLAlchemyAdapter, VectorDBInterface):
         if collection_name not in self._write_locks:
             self._write_locks[collection_name] = asyncio.Lock()
         return self._write_locks[collection_name]
+
+    def _indexes_enabled(self) -> bool:
+        value = os.getenv("PGVECTOR_ENABLE_INDEXES", "true").strip().lower()
+        return value not in {"0", "false", "no", "off"}
+
+    def _index_type(self) -> str:
+        value = os.getenv("PGVECTOR_INDEX_TYPE", "vchordrq").strip().lower()
+        if value not in {"vchordrq", "hnsw", "ivfflat"}:
+            logger.warning("Unsupported PGVECTOR_INDEX_TYPE=%s; falling back to vchordrq.", value)
+            return "vchordrq"
+        return value
+
+    def _index_name(self, collection_name: str, suffix: str) -> str:
+        normalized = re.sub(r"[^a-zA-Z0-9_]+", "_", collection_name).strip("_").lower()
+        checksum = format(zlib.crc32(collection_name.encode("utf-8")) & 0xFFFFFFFF, "08x")
+        return f"{normalized[:40]}_{suffix}_{checksum}"[:63]
+
+    def _distance_expression(self, vector_column, query_vector: List[float], vector_size: int):
+        if self._index_type() != "vchordrq" and vector_size > PGVECTOR_INDEX_DIMENSION_LIMIT:
+            return cast(vector_column, self.HALFVEC(vector_size)).cosine_distance(query_vector)
+
+        return vector_column.cosine_distance(query_vector)
+
+    async def _create_search_indexes(self, collection_name: str, vector_size: int) -> None:
+        if not self._indexes_enabled():
+            return
+
+        index_type = self._index_type()
+        async with self.engine.begin() as connection:
+            preparer = connection.dialect.identifier_preparer
+            table_name = preparer.quote(collection_name)
+            vector_index_name = preparer.quote(self._index_name(collection_name, f"vector_{index_type}"))
+            payload_index_name = preparer.quote(self._index_name(collection_name, "belongs_to_set_gin"))
+
+            if index_type == "vchordrq":
+                vector_index_target = "(vector vector_cosine_ops)"
+            elif vector_size > PGVECTOR_INDEX_DIMENSION_LIMIT:
+                vector_index_target = f"((vector::halfvec({vector_size})) halfvec_cosine_ops)"
+            else:
+                vector_index_target = "(vector vector_cosine_ops)"
+
+            if index_type == "vchordrq":
+                vector_index_sql = (
+                    f"CREATE INDEX IF NOT EXISTS {vector_index_name} "
+                    f"ON {table_name} USING vchordrq {vector_index_target}"
+                )
+            elif index_type == "ivfflat":
+                lists = max(1, int(os.getenv("PGVECTOR_IVFFLAT_LISTS", "100")))
+                vector_index_sql = (
+                    f"CREATE INDEX IF NOT EXISTS {vector_index_name} "
+                    f"ON {table_name} USING ivfflat {vector_index_target} WITH (lists = {lists})"
+                )
+            else:
+                hnsw_m = max(2, int(os.getenv("PGVECTOR_HNSW_M", "16")))
+                hnsw_ef_construction = max(4, int(os.getenv("PGVECTOR_HNSW_EF_CONSTRUCTION", "64")))
+                vector_index_sql = (
+                    f"CREATE INDEX IF NOT EXISTS {vector_index_name} "
+                    f"ON {table_name} USING hnsw {vector_index_target} "
+                    f"WITH (m = {hnsw_m}, ef_construction = {hnsw_ef_construction})"
+                )
+
+            await connection.exec_driver_sql(vector_index_sql)
+            await connection.exec_driver_sql(
+                f"CREATE INDEX IF NOT EXISTS {payload_index_name} "
+                f"ON {table_name} USING gin (((payload::jsonb) -> 'belongs_to_set'))"
+            )
 
     async def embed_data(self, data: list[str]) -> list[list[float]]:
         """
@@ -262,6 +333,8 @@ class PGVectorAdapter(SQLAlchemyAdapter, VectorDBInterface):
                     # might be rolled back.
                     async with self.engine.begin() as connection:
                         await connection.run_sync(self._metadata.reflect, only=[collection_name])
+
+        await self._create_search_indexes(collection_name, vector_size)
 
     @retry(
         retry=retry_if_exception_type((DeadlockDetectedError, DBAPIError)),
@@ -480,6 +553,10 @@ class PGVectorAdapter(SQLAlchemyAdapter, VectorDBInterface):
 
         # Get PGVectorDataPoint Table from database
         PGVectorDataPoint = await self.get_table(collection_name)
+        vector_size = self.embedding_engine.get_vector_size()
+        distance_expression = self._distance_expression(
+            PGVectorDataPoint.c.vector, query_vector, vector_size
+        )
 
         if limit is None:
             async with self.get_async_session() as session:
@@ -515,9 +592,7 @@ class PGVectorAdapter(SQLAlchemyAdapter, VectorDBInterface):
                 query = (
                     select(
                         *select_columns,
-                        PGVectorDataPoint.c.vector.cosine_distance(query_vector).label(
-                            "similarity"
-                        ),
+                        distance_expression.label("similarity"),
                     )
                     .where(
                         cast(PGVectorDataPoint.c.payload, JSONB)
@@ -529,7 +604,7 @@ class PGVectorAdapter(SQLAlchemyAdapter, VectorDBInterface):
             else:
                 query = select(
                     *select_columns,
-                    PGVectorDataPoint.c.vector.cosine_distance(query_vector).label("similarity"),
+                    distance_expression.label("similarity"),
                 ).order_by("similarity")
 
             if limit > 0:
