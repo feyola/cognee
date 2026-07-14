@@ -1,22 +1,31 @@
-# Use an official Node.js runtime as a parent image
-FROM node:22-alpine
+FROM node:22-alpine AS dependencies
 
-# Set the working directory to /app
 WORKDIR /app
-
-# Copy package.json and package-lock.json to the working directory
 COPY package.json package-lock.json ./
-
-# Install any needed packages specified in package.json
 RUN npm ci
 RUN npm rebuild lightningcss
 
-# Copy the rest of the application code to the working directory
+FROM dependencies AS builder
+
+ARG NEXT_PUBLIC_LOCAL_API_URL=http://localhost:8000
+ARG NEXT_PUBLIC_BACKEND_API_URL=http://localhost:8000/api
+ENV NEXT_PUBLIC_LOCAL_API_URL=${NEXT_PUBLIC_LOCAL_API_URL}
+ENV NEXT_PUBLIC_BACKEND_API_URL=${NEXT_PUBLIC_BACKEND_API_URL}
+
 COPY src ./src
 COPY public ./public
-COPY next.config.mjs .
-COPY postcss.config.mjs .
-COPY tsconfig.json .
+COPY next.config.mjs postcss.config.mjs tsconfig.json ./
+RUN npm run build
 
-# Build the app and run it
-CMD ["npm", "run", "dev"]
+FROM node:22-alpine AS runtime
+
+WORKDIR /app
+ENV NODE_ENV=production
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev && npm cache clean --force
+COPY --from=builder /app/.next ./.next
+COPY --from=builder /app/public ./public
+COPY --from=builder /app/next.config.mjs ./next.config.mjs
+
+EXPOSE 3000
+CMD ["npm", "run", "start", "--", "--hostname", "0.0.0.0", "--port", "3000"]

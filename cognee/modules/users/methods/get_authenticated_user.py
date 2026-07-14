@@ -23,10 +23,9 @@ def _resolve_auth_posture() -> tuple[bool, bool, str]:
         If unset, it inherits from ``ENABLE_BACKEND_ACCESS_CONTROL`` — turning
         off backend access control disables the auth requirement, matching
         single-user / internal-deployment expectations.
-      * Invariant: multi-tenant mode requires authentication. Setting
-        ``REQUIRE_AUTHENTICATION=false`` together with
-        ``ENABLE_BACKEND_ACCESS_CONTROL=true`` is a misconfiguration; we log
-        a warning and force auth on to keep per-user data isolated.
+      * An explicit ``REQUIRE_AUTHENTICATION=false`` enables trusted shared
+        access through the default user while retaining dataset database
+        routing. Leaving it unset preserves the secure multi-tenant default.
     """
 
     def _read_bool(name: str) -> tuple[Optional[bool], bool]:
@@ -43,18 +42,7 @@ def _resolve_auth_posture() -> tuple[bool, bool, str]:
     if require_explicit:
         assert require_value is not None  # require_explicit implies a parsed value
         require_authentication = require_value
-        if enable_access_control and not require_authentication:
-            logger.warning(
-                "REQUIRE_AUTHENTICATION=false is incompatible with "
-                "ENABLE_BACKEND_ACCESS_CONTROL=true: multi-tenant mode requires "
-                "authentication. Forcing REQUIRE_AUTHENTICATION=true. "
-                "To disable auth for a single-user deployment, also set "
-                "ENABLE_BACKEND_ACCESS_CONTROL=false."
-            )
-            require_authentication = True
-            reason = "forced on by multi-tenant mode (REQUIRE_AUTHENTICATION=false was ignored)"
-        else:
-            reason = "explicit REQUIRE_AUTHENTICATION"
+        reason = "explicit REQUIRE_AUTHENTICATION"
     else:
         require_authentication = enable_access_control
         reason = (
