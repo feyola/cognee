@@ -91,14 +91,13 @@ export default function SchemaPage() {
   const { datasets, selectedDataset } = useFilter();
 
   // ── Viz state ────────────────────────────────────────────────────────────
-  const [vizSrc, setVizSrc] = useState<string | null>(null);
+  const [vizHtml, setVizHtml] = useState<string | null>(null);
   const [vizLoading, setVizLoading] = useState(true);
   const [vizError, setVizError] = useState<string | null>(null);
   // The iframe stays hidden behind the loading overlay until its content has
   // settled (dark theme applied, schema tab selected) — without this the
   // visualization visibly boots through light-mode/graph-view states.
   const [vizReady, setVizReady] = useState(false);
-  const vizBlobRef = useRef<string | null>(null);
   const [vizRefreshKey, setVizRefreshKey] = useState(0);
 
   // ── Config state (moved from Mindmap) ─────────────────────────
@@ -132,10 +131,9 @@ export default function SchemaPage() {
 
   // ── Reset on dataset change ───────────────────────────────────────────
   useEffect(() => {
-    setVizSrc(null);
+    setVizHtml(null);
     setVizError(null);
     setVizReady(false);
-    if (vizBlobRef.current) { URL.revokeObjectURL(vizBlobRef.current); vizBlobRef.current = null; }
     setSelectedModelId(null);
     setSelectedPromptName(null);
     setSelectedOntologyKey(null);
@@ -173,15 +171,14 @@ export default function SchemaPage() {
 
   // ── Fetch viz ─────────────────────────────────────────────────────────
   useEffect(() => {
-    if (!activeDataset || isInitializing) { setVizLoading(false); return; }
+    if (!datasetId || isInitializing) { setVizLoading(false); return; }
     setVizLoading(true);
     setVizError(null);
     setVizReady(false);
-    if (vizBlobRef.current) { URL.revokeObjectURL(vizBlobRef.current); vizBlobRef.current = null; }
 
     const fetchViz = cogniInstance
-      ? cogniInstance.fetch(`/v1/visualize?dataset_id=${activeDataset.id}`)
-      : global.fetch(`/api/visualize?dataset_id=${activeDataset.id}`, { credentials: "include" });
+      ? cogniInstance.fetch(`/v1/visualize?dataset_id=${datasetId}`)
+      : global.fetch(`/api/visualize?dataset_id=${datasetId}`, { credentials: "include" });
 
     fetchViz
       .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.text(); })
@@ -200,10 +197,7 @@ export default function SchemaPage() {
             "var btn=document.querySelector('.tab-btn[data-view=\"schema\"]');" +
             "if(btn){btn.click();clearInterval(iv);}else if(tries>40){clearInterval(iv);}" +
             "},50);})()" + closeScript;
-          const blob = new Blob([html.replace("</body>", inject + "</body>")], { type: "text/html" });
-          const url = URL.createObjectURL(blob);
-          vizBlobRef.current = url;
-          setVizSrc(url);
+          setVizHtml(html.replace("</body>", inject + "</body>"));
         } else {
           setVizError("No schema data in this brain yet.");
         }
@@ -211,7 +205,6 @@ export default function SchemaPage() {
       .catch((err) => setVizError(err.message || "Failed to load schema"))
       .finally(() => setVizLoading(false));
 
-    return () => { if (vizBlobRef.current) { URL.revokeObjectURL(vizBlobRef.current); vizBlobRef.current = null; } };
   }, [datasetId, isInitializing, cogniInstance, vizRefreshKey]);
 
   // ── Config helpers ────────────────────────────────────────────────────
@@ -288,7 +281,7 @@ export default function SchemaPage() {
   async function handleReprocess() {
     if (!cogniInstance || !datasetId || !datasetName) return;
     setReprocessing(true);
-    setVizSrc(null);
+    setVizHtml(null);
     try {
       await cognifyDataset({ id: datasetId, name: datasetName, data: [], status: "processing" }, cogniInstance, getCognifyOptions());
       trackEvent({ pageName: "Memory Schema", eventName: "dataset_reprocessed", additionalProperties: { dataset_id: datasetId } });
@@ -490,7 +483,7 @@ export default function SchemaPage() {
 
       {/* ── Visualization ── */}
       <div style={{ flex: 1, position: "relative", overflow: "hidden" }}>
-        {(vizLoading || (vizSrc && !vizReady)) && (
+        {(vizLoading || (vizHtml && !vizReady)) && (
           <div style={{ position: "absolute", inset: 0, zIndex: 1 }}>
             <PageLoading name="Memory Schema" />
           </div>
@@ -500,10 +493,10 @@ export default function SchemaPage() {
             <span style={{ fontSize: 14, color: "#EF4444" }}>{vizError}</span>
           </div>
         )}
-        {vizSrc && (
+        {vizHtml && (
           <iframe
             key={`${datasetId}-${vizRefreshKey}`}
-            src={vizSrc}
+            srcDoc={vizHtml}
             onLoad={() => setTimeout(() => setVizReady(true), 250)}
             style={{ width: "100%", height: "100%", border: "none", opacity: vizReady ? 1 : 0, transition: "opacity 200ms ease" }}
             title="Memory Schema"
