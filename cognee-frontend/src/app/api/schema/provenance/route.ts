@@ -11,22 +11,6 @@ export async function GET(request: NextRequest) {
   const apiKey = request.headers.get("x-api-key");
   if (apiKey) headers["x-api-key"] = apiKey;
 
-  if (!cookie && !authHeader && !apiKey) {
-    try {
-      const loginResp = await fetch(`${localApiUrl}/api/v1/auth/login`, {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: "username=default_user@example.com&password=default_password",
-      });
-      if (loginResp.ok) {
-        const data = await loginResp.json();
-        headers["authorization"] = `Bearer ${data.access_token}`;
-      }
-    } catch {
-      // Fall through
-    }
-  }
-
   try {
     const response = await fetch(`${localApiUrl}/api/v1/schema/provenance`, { headers });
 
