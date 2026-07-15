@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const localApiUrl = process.env.NEXT_PUBLIC_LOCAL_API_URL || "http://localhost:8000";
+const localApiUrl = process.env.COGNEE_INTERNAL_API_URL || "http://api:8000";
 
 // Proxies the cognee /v1/schema/provenance HTML view (memory-provenance graph:
 // Tenant -> User -> Agent -> Brain -> File -> memory) so it can be embedded in

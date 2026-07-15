@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const localApiUrl = process.env.NEXT_PUBLIC_LOCAL_API_URL || "http://localhost:8000";
+const localApiUrl = process.env.COGNEE_INTERNAL_API_URL || "http://api:8000";
 
 export async function GET(request: NextRequest) {
   const { searchParams } = request.nextUrl;
