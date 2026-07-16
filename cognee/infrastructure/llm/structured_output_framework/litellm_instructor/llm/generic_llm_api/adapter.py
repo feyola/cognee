@@ -150,13 +150,26 @@ def _enforce_strict_json_schema(response_format: Any) -> Any:
     if not isinstance(schema, dict):
         return response_format
 
-    def close_objects(value: Any) -> None:
+    def normalize_schema(value: Any) -> None:
         if isinstance(value, list):
             for item in value:
-                close_objects(item)
+                normalize_schema(item)
             return
         if not isinstance(value, dict):
             return
+
+        # OpenAI strict structured outputs support anyOf, but reject the
+        # oneOf/discriminator pair emitted for Pydantic discriminated unions.
+        # Literal discriminator fields still make the alternatives exclusive,
+        # and Pydantic validates the materialized response after generation.
+        if "discriminator" in value:
+            if "oneOf" in value:
+                if "anyOf" in value:
+                    raise ValueError(
+                        "Cannot normalize a discriminated union containing both oneOf and anyOf."
+                    )
+                value["anyOf"] = value.pop("oneOf")
+            value.pop("discriminator")
 
         properties = value.get("properties")
         if value.get("type") == "object" or isinstance(properties, dict):
@@ -165,9 +178,9 @@ def _enforce_strict_json_schema(response_format: Any) -> Any:
                 value["required"] = list(properties)
 
         for nested_value in value.values():
-            close_objects(nested_value)
+            normalize_schema(nested_value)
 
-    close_objects(schema)
+    normalize_schema(schema)
     return strict_response_format
 
 

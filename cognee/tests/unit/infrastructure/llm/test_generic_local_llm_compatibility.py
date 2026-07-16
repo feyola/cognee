@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from cognee.infrastructure.session.feedback_models import SessionTurnAnalysis
 from cognee.infrastructure.llm.structured_output_framework.litellm_instructor.llm.generic_llm_api.adapter import (
     _copy_reasoning_content_to_empty_content,
     _enforce_strict_json_schema,
@@ -99,6 +100,69 @@ def test_strict_json_schema_closes_all_objects_without_mutating_input():
     assert child_schema["additionalProperties"] is False
     assert child_schema["required"] == ["value", "note"]
     assert "additionalProperties" not in response_format["json_schema"]["schema"]
+
+
+def test_strict_json_schema_normalizes_nested_discriminated_unions():
+    response_format = {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "SessionTurnAnalysis",
+            "strict": True,
+            "schema": SessionTurnAnalysis.model_json_schema(),
+        },
+    }
+
+    strict = _enforce_strict_json_schema(response_format)
+    items = strict["json_schema"]["schema"]["properties"]["candidate_context_updates"][
+        "items"
+    ]
+
+    assert len(items["anyOf"]) == 4
+
+    def find_keywords(value, keywords):
+        if isinstance(value, list):
+            return [
+                found
+                for item in value
+                for found in find_keywords(item, keywords)
+            ]
+        if not isinstance(value, dict):
+            return []
+        found = [key for key in keywords if key in value]
+        return found + [
+            nested_found
+            for nested_value in value.values()
+            for nested_found in find_keywords(nested_value, keywords)
+        ]
+
+    assert find_keywords(strict["json_schema"]["schema"], {"oneOf", "discriminator"}) == []
+    source_items = response_format["json_schema"]["schema"]["properties"][
+        "candidate_context_updates"
+    ]["items"]
+    assert "oneOf" in source_items
+    assert "discriminator" in source_items
+
+
+def test_strict_json_schema_preserves_non_discriminated_one_of():
+    response_format = {
+        "type": "json_schema",
+        "json_schema": {
+            "schema": {
+                "oneOf": [
+                    {"type": "string"},
+                    {"type": "number"},
+                ]
+            }
+        },
+    }
+
+    strict = _enforce_strict_json_schema(response_format)
+
+    assert strict["json_schema"]["schema"]["oneOf"] == [
+        {"type": "string"},
+        {"type": "number"},
+    ]
+    assert "anyOf" not in strict["json_schema"]["schema"]
 
 
 @pytest.mark.asyncio
