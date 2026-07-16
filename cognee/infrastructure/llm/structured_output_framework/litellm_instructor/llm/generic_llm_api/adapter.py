@@ -6,6 +6,7 @@ import logging
 import mimetypes
 import os
 from contextlib import asynccontextmanager
+from collections.abc import AsyncIterable
 from typing import Any
 
 import instructor
@@ -123,6 +124,21 @@ def _copy_reasoning_content_to_empty_content(response: Any) -> Any:
     return response
 
 
+async def _materialize_streaming_response(
+    response: Any, *, messages: list[dict[str, Any]] | None = None
+) -> Any:
+    """Combine a LiteLLM async stream into the response expected by Instructor."""
+    if not isinstance(response, AsyncIterable):
+        return response
+
+    chunks = [chunk async for chunk in response]
+    materialized = litellm.stream_chunk_builder(chunks=chunks, messages=messages)
+    if materialized is None:
+        raise RuntimeError("LLM stream completed without response chunks.")
+
+    return materialized
+
+
 class GenericAPIAdapter(LLMInterface):
     """
     Adapter for Generic API LLM provider API.
@@ -178,6 +194,7 @@ class GenericAPIAdapter(LLMInterface):
 
     async def _acompletion_with_reasoning_content_fallback(self, *args: Any, **kwargs: Any) -> Any:
         response = await litellm.acompletion(*args, **kwargs)
+        response = await _materialize_streaming_response(response, messages=kwargs.get("messages"))
         return _copy_reasoning_content_to_empty_content(response)
 
     async def acreate_str_output(
@@ -203,6 +220,13 @@ class GenericAPIAdapter(LLMInterface):
                     api_version=self.api_version,
                     **merged_kwargs,
                 )
+        response = await _materialize_streaming_response(
+            response,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": text_input},
+            ],
+        )
         response = _copy_reasoning_content_to_empty_content(response)
         return response.choices[0].message.content or ""
 

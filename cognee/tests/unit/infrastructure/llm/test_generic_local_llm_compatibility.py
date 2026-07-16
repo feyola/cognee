@@ -6,6 +6,7 @@ import pytest
 from cognee.infrastructure.llm.structured_output_framework.litellm_instructor.llm.generic_llm_api.adapter import (
     _copy_reasoning_content_to_empty_content,
     _llm_concurrency_context,
+    _materialize_streaming_response,
 )
 
 
@@ -23,6 +24,44 @@ def test_existing_content_is_preserved():
 
     _copy_reasoning_content_to_empty_content(response)
     assert message.content == "final"
+
+
+@pytest.mark.asyncio
+async def test_non_streaming_response_is_preserved():
+    response = SimpleNamespace(choices=[])
+
+    assert await _materialize_streaming_response(response) is response
+
+
+@pytest.mark.asyncio
+async def test_streaming_response_is_materialized(monkeypatch):
+    chunks = [SimpleNamespace(value="first"), SimpleNamespace(value="second")]
+    messages = [{"role": "user", "content": "hello"}]
+    materialized = SimpleNamespace(choices=[])
+    builder_calls = []
+
+    async def stream():
+        for chunk in chunks:
+            yield chunk
+
+    def build_stream(*, chunks, messages):
+        builder_calls.append((chunks, messages))
+        return materialized
+
+    monkeypatch.setattr("litellm.stream_chunk_builder", build_stream)
+
+    assert await _materialize_streaming_response(stream(), messages=messages) is materialized
+    assert builder_calls == [(chunks, messages)]
+
+
+@pytest.mark.asyncio
+async def test_empty_stream_is_rejected():
+    async def empty_stream():
+        if False:
+            yield None
+
+    with pytest.raises(RuntimeError, match="without response chunks"):
+        await _materialize_streaming_response(empty_stream())
 
 
 @pytest.mark.asyncio
