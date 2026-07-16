@@ -5,6 +5,7 @@ import pytest
 
 from cognee.infrastructure.llm.structured_output_framework.litellm_instructor.llm.generic_llm_api.adapter import (
     _copy_reasoning_content_to_empty_content,
+    _enforce_strict_json_schema,
     _llm_concurrency_context,
     _materialize_streaming_response,
 )
@@ -62,6 +63,42 @@ async def test_empty_stream_is_rejected():
 
     with pytest.raises(RuntimeError, match="without response chunks"):
         await _materialize_streaming_response(empty_stream())
+
+
+def test_strict_json_schema_closes_all_objects_without_mutating_input():
+    response_format = {
+        "type": "json_schema",
+        "json_schema": {
+            "schema": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "child": {"$ref": "#/$defs/Child"},
+                },
+                "required": ["name"],
+                "$defs": {
+                    "Child": {
+                        "type": "object",
+                        "properties": {
+                            "value": {"type": "string"},
+                            "note": {"type": ["string", "null"]},
+                        },
+                    }
+                },
+            }
+        },
+    }
+
+    strict = _enforce_strict_json_schema(response_format)
+    schema = strict["json_schema"]["schema"]
+    child_schema = schema["$defs"]["Child"]
+
+    assert strict is not response_format
+    assert schema["additionalProperties"] is False
+    assert schema["required"] == ["name", "child"]
+    assert child_schema["additionalProperties"] is False
+    assert child_schema["required"] == ["value", "note"]
+    assert "additionalProperties" not in response_format["json_schema"]["schema"]
 
 
 @pytest.mark.asyncio

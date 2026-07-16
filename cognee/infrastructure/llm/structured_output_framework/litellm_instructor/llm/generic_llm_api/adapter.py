@@ -7,6 +7,7 @@ import mimetypes
 import os
 from contextlib import asynccontextmanager
 from collections.abc import AsyncIterable
+from copy import deepcopy
 from typing import Any
 
 import instructor
@@ -139,6 +140,37 @@ async def _materialize_streaming_response(
     return materialized
 
 
+def _enforce_strict_json_schema(response_format: Any) -> Any:
+    """Return a strict OpenAI JSON schema without mutating Instructor's input."""
+    if not isinstance(response_format, dict) or response_format.get("type") != "json_schema":
+        return response_format
+
+    strict_response_format = deepcopy(response_format)
+    schema = strict_response_format.get("json_schema", {}).get("schema")
+    if not isinstance(schema, dict):
+        return response_format
+
+    def close_objects(value: Any) -> None:
+        if isinstance(value, list):
+            for item in value:
+                close_objects(item)
+            return
+        if not isinstance(value, dict):
+            return
+
+        properties = value.get("properties")
+        if value.get("type") == "object" or isinstance(properties, dict):
+            value["additionalProperties"] = False
+            if isinstance(properties, dict):
+                value["required"] = list(properties)
+
+        for nested_value in value.values():
+            close_objects(nested_value)
+
+    close_objects(schema)
+    return strict_response_format
+
+
 class GenericAPIAdapter(LLMInterface):
     """
     Adapter for Generic API LLM provider API.
@@ -182,7 +214,10 @@ class GenericAPIAdapter(LLMInterface):
         self.fallback_model = fallback_model
         self.fallback_api_key = fallback_api_key
         self.fallback_endpoint = fallback_endpoint
-        self._base_llm_args: dict[str, Any] = llm_args or {}
+        self._base_llm_args: dict[str, Any] = dict(llm_args or {})
+        self.enforce_strict_json_schema = bool(
+            self._base_llm_args.pop("enforce_strict_json_schema", False)
+        )
         self.llm_args = self._base_llm_args
 
         self.instructor_mode = instructor_mode if instructor_mode else self.default_instructor_mode
@@ -193,6 +228,8 @@ class GenericAPIAdapter(LLMInterface):
         )
 
     async def _acompletion_with_reasoning_content_fallback(self, *args: Any, **kwargs: Any) -> Any:
+        if self.enforce_strict_json_schema and "response_format" in kwargs:
+            kwargs["response_format"] = _enforce_strict_json_schema(kwargs["response_format"])
         response = await litellm.acompletion(*args, **kwargs)
         response = await _materialize_streaming_response(response, messages=kwargs.get("messages"))
         return _copy_reasoning_content_to_empty_content(response)
