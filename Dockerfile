@@ -32,9 +32,12 @@ RUN apt-get update && apt-get install -y \
 # Copy pyproject.toml and lockfile first for better caching
 COPY README.md pyproject.toml uv.lock entrypoint.sh ./
 
+# Production API profile: PostgreSQL storage, standard ingestion, and the two
+# supported local-model paths. The Ollama extra also provides transformers for
+# HUGGINGFACE_TOKENIZER; llama-cpp enables both server and in-process modes.
 # Install the project's dependencies using the lockfile and settings
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --extra debug --extra api --extra postgres --extra neo4j --extra llama-index --extra ollama --extra mistral --extra groq --extra anthropic --extra codegraph --frozen --no-install-project --no-dev --no-editable
+    uv sync --extra api --extra postgres --extra llama-index --extra ollama --extra llama-cpp --frozen --no-install-project --no-dev --no-editable
 
 # Then, add the rest of the project source code and install it
 # Installing separately from its dependencies allows optimal layer caching
@@ -46,12 +49,13 @@ COPY ./cognee_db_workers /app/cognee_db_workers
 # imported at module load by alembic/versions/b9274c27a25a_kuzu_11_migration.py.
 COPY ./kuzu /app/kuzu
 RUN --mount=type=cache,target=/root/.cache/uv \
-uv sync --extra debug --extra api --extra postgres --extra neo4j --extra llama-index --extra ollama --extra mistral --extra groq --extra anthropic --extra codegraph --frozen --no-dev --no-editable
+uv sync --extra api --extra postgres --extra llama-index --extra ollama --extra llama-cpp --frozen --no-dev --no-editable
 
 FROM python:3.12-slim-bookworm
 
 RUN apt-get update && apt-get install -y \
     libpq5 \
+    libgomp1 \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
