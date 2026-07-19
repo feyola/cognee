@@ -77,6 +77,17 @@ async def test_create_and_get(adapter):
 
 
 @pytest.mark.asyncio
+async def test_uuid_user_id_is_normalized_for_text_cache_columns(adapter):
+    user_id = uuid4()
+
+    await adapter.create_qa_entry(user_id, "s1", "Q", "C", "A", qa_id="id1")
+
+    entries = await adapter.get_all_qa_entries(user_id, "s1")
+    assert len(entries) == 1
+    assert entries[0].qa_id == "id1"
+
+
+@pytest.mark.asyncio
 async def test_create_qa_entry_generates_uuid4_qa_id_when_missing(adapter):
     """create_qa_entry without qa_id falls back to a generated uuid4."""
     await adapter.create_qa_entry("u1", "s1", "Q", "C", "A")

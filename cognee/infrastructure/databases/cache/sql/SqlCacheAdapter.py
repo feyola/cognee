@@ -203,7 +203,10 @@ class SqlCacheAdapter(CacheDBInterface):
 
     def _session_filter(self, table, user_id: str, session_id: str):
         """WHERE clause for one session's rows."""
-        return (table.c.user_id == user_id) & (table.c.session_id == session_id)
+        # Cache identity columns are intentionally portable TEXT columns. API
+        # callers commonly pass ``uuid.UUID`` user ids; binding those objects
+        # directly makes PostgreSQL compare TEXT to UUID and reject the query.
+        return (table.c.user_id == str(user_id)) & (table.c.session_id == str(session_id))
 
     async def _refresh_session_ttl(self, session, table, user_id: str, session_id: str) -> None:
         """Slide the whole session's expiry forward (Redis EXPIRE-on-write parity)."""
@@ -474,7 +477,7 @@ class SqlCacheAdapter(CacheDBInterface):
                 await self._purge_session_expired(session, cache_qa_entries, user_id, session_id)
                 await session.execute(
                     insert(cache_qa_entries).values(
-                        user_id=user_id,
+                        user_id=str(user_id),
                         session_id=session_id,
                         qa_id=qa_entry["qa_id"],
                         payload=qa_entry,
@@ -737,7 +740,7 @@ class SqlCacheAdapter(CacheDBInterface):
                 await self._purge_session_expired(session, cache_trace_entries, user_id, session_id)
                 await session.execute(
                     insert(cache_trace_entries).values(
-                        user_id=user_id,
+                        user_id=str(user_id),
                         session_id=session_id,
                         payload=trace_entry,
                         expires_at=self._session_expiry(),
@@ -825,7 +828,7 @@ class SqlCacheAdapter(CacheDBInterface):
                 )
                 await session.execute(
                     insert(cache_session_context).values(
-                        user_id=user_id,
+                        user_id=str(user_id),
                         session_id=session_id,
                         entry_id=entry_id,
                         payload=entry_dump,
@@ -957,7 +960,7 @@ class SqlCacheAdapter(CacheDBInterface):
                 await session.execute(
                     insert(cache_usage_logs).values(
                         log_key=self.log_key,
-                        user_id=user_id,
+                        user_id=str(user_id),
                         payload=log_entry,
                         expires_at=expires_at,
                     )
@@ -967,7 +970,7 @@ class SqlCacheAdapter(CacheDBInterface):
                         update(cache_usage_logs)
                         .where(
                             cache_usage_logs.c.log_key == self.log_key,
-                            cache_usage_logs.c.user_id == user_id,
+                            cache_usage_logs.c.user_id == str(user_id),
                         )
                         .values(expires_at=expires_at)
                     )
@@ -995,7 +998,7 @@ class SqlCacheAdapter(CacheDBInterface):
                     select(cache_usage_logs.c.payload)
                     .where(
                         cache_usage_logs.c.log_key == self.log_key,
-                        cache_usage_logs.c.user_id == user_id,
+                        cache_usage_logs.c.user_id == str(user_id),
                         self._not_expired(cache_usage_logs),
                     )
                     .order_by(cache_usage_logs.c.seq.desc())
