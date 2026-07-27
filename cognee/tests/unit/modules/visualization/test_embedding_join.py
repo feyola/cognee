@@ -58,9 +58,7 @@ class FakeVectorEngine:
 
 
 class LegacyVectorEngine(FakeVectorEngine):
-    """An unsupported adapter: ``retrieve()`` has no ``include_vector`` param (like
-    PGVector). The signature probe must route it straight to the re-embed fallback,
-    so this ``retrieve()`` is never even called with the flag."""
+    """An unsupported adapter whose retrieve has no include_vector parameter."""
 
     async def retrieve(self, collection_name, data_point_ids):
         self.retrieve_calls.append((collection_name, list(data_point_ids)))
@@ -70,6 +68,20 @@ class LegacyVectorEngine(FakeVectorEngine):
             for did in data_point_ids
             if did in rows
         ]
+
+
+class LeasedVectorEngine:
+    """Model the generic-call-signature proxy used by the engine cache."""
+
+    def __init__(self, adapter):
+        self.__wrapped__ = adapter
+        self.embedding_engine = adapter.embedding_engine
+
+    async def has_collection(self, *args, **kwargs):
+        return await self.__wrapped__.has_collection(*args, **kwargs)
+
+    async def retrieve(self, *args, **kwargs):
+        return await self.__wrapped__.retrieve(*args, **kwargs)
 
 
 # ScoredResult.id is a UUID, so fixtures use canonical UUID strings.
@@ -107,6 +119,17 @@ def test_collection_resolution_one_batched_retrieve_per_type():
     assert set(called) == {"Entity_name", "EntityType_name"}
     assert len(engine.retrieve_calls) == 2
     assert set(called["Entity_name"]) == {E1, E2}
+
+
+def test_leased_engine_proxy_uses_wrapped_adapter_capabilities():
+    adapter = FakeVectorEngine({"Entity_name": {E1: [0.1, 0.2, 0.3]}})
+    engine = LeasedVectorEngine(adapter)
+
+    result = asyncio.run(fetch_node_embeddings([_node(E1, "Entity")], vector_engine=engine))
+
+    assert result == {E1: [0.1, 0.2, 0.3]}
+    assert adapter.retrieve_calls == [("Entity_name", [E1])]
+    assert adapter.embedding_engine.calls == []
 
 
 def test_unknown_type_and_missing_collection_skipped():

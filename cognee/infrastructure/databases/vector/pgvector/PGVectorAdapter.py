@@ -431,8 +431,19 @@ class PGVectorAdapter(SQLAlchemyAdapter, VectorDBInterface):
             f"Collection '{collection_name}' not found!",
         )
 
-    async def retrieve(self, collection_name: str, data_point_ids: List[str]):
-        """Return rows from `collection_name` matching any of `data_point_ids`."""
+    async def retrieve(
+        self,
+        collection_name: str,
+        data_point_ids: List[str],
+        *,
+        include_vector: bool = False,
+    ):
+        """Return rows from ``collection_name`` matching ``data_point_ids``.
+
+        When ``include_vector`` is true, attach the stored embedding to a copy
+        of the result payload.  Visualization uses this path to avoid
+        re-embedding every displayed graph node.
+        """
         # Get PGVectorDataPoint Table from database
         try:
             PGVectorDataPoint = await self.get_table(collection_name)
@@ -458,7 +469,13 @@ class PGVectorAdapter(SQLAlchemyAdapter, VectorDBInterface):
                 unique_results.append(result)
 
             return [
-                ScoredResult(id=parse_id(result.id), payload=result.payload, score=0)
+                ScoredResult(
+                    id=parse_id(result.id),
+                    payload={**(result.payload or {}), "vector": list(result.vector)}
+                    if include_vector
+                    else result.payload,
+                    score=0,
+                )
                 for result in unique_results
             ]
 
