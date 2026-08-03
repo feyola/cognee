@@ -1,6 +1,9 @@
 "use server";
 
-import type { UserAppState } from "./types";
+interface UserAppState {
+  hasSeen_welcome: boolean;
+  onboarding_complete: boolean;
+}
 
 /**
  * Open-source stub — app_metadata flags require Auth0.

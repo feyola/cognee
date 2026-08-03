@@ -8,7 +8,12 @@
 
 export function trackPageView(..._args: unknown[]) {}
 export function trackPageEvent(..._args: unknown[]) {}
-export function trackEvent(..._args: unknown[]) {}
+export type TrackEventParams = {
+  pageName?: string;
+  eventName?: string;
+  additionalProperties?: Record<string, unknown>;
+};
+export function trackEvent(_params: TrackEventParams) {}
 export function identifyUser(..._args: unknown[]) {}
 export function getSessionId() { return ""; }
 export function getSessionOrigin() { return ""; }

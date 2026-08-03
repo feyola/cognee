@@ -9,9 +9,9 @@ Strategy per node type:
   * Group node ids by type and derive the collection ``f"{Type}_{field}"`` from
     the type's indexed field.
   * One batched ``retrieve(..., include_vector=True)`` per collection — never per
-    node. On adapters that don't support ``include_vector`` (everything except
-    LanceDB), fall back to re-embedding the indexed field in one batch (the stored
-    vector is ``embed(indexed_field)``, so the re-embedded vector matches).
+    node. On adapters that don't support ``include_vector``, fall back to
+    re-embedding the indexed field in one batch (the stored vector is
+    ``embed(indexed_field)``, so the re-embedded vector matches).
 
 Bounding lives in :func:`select_nodes`: the orchestrator samples the graph down
 to ``SEMANTIC_NODE_CAP`` once, and the fetch, projection, clustering, and
@@ -94,13 +94,17 @@ async def _fetch_for_collection(
 ) -> Dict[str, List[float]]:
     """One batched retrieve for a collection, with re-embed fallback."""
     ids = [str(node["id"]) for node in type_nodes]
-    # Capability detection (not error handling): only LanceDB's retrieve() declares
+    # Capability detection (not error handling): supporting adapters declare
     # ``include_vector``. Probe the signature — the same idiom run_async / Task use
     # for optional params — so a genuine TypeError raised *inside* a supporting
     # retrieve() surfaces via fetch_node_embeddings' ``except Exception`` instead of
     # being silently reinterpreted as "unsupported" and masked behind a re-embed.
     try:
-        supports_vector = "include_vector" in inspect.signature(vector_engine.retrieve).parameters
+        # Cached database engines are lease proxies whose forwarding callable
+        # has a generic ``(*args, **kwargs)`` signature.  Their ``__wrapped__``
+        # attribute exposes the adapter and therefore its real capability.
+        signature_owner = getattr(vector_engine, "__wrapped__", vector_engine)
+        supports_vector = "include_vector" in inspect.signature(signature_owner.retrieve).parameters
     except (ValueError, TypeError):
         supports_vector = False
     if not supports_vector:

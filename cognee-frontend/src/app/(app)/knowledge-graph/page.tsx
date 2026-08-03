@@ -33,13 +33,12 @@ export default function KnowledgeGraphPage() {
   const { cogniInstance, isInitializing } = useCogniInstance();
   const { datasets, selectedDataset, refreshDatasets } = useFilter();
 
-  const [iframeSrc, setIframeSrc] = useState<string | null>(null);
+  const [iframeHtml, setIframeHtml] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   // Keep the iframe hidden behind the loading overlay until its content has
   // settled (dark theme applied) — avoids the light-mode boot flicker.
   const [vizReady, setVizReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const blobRef = useRef<string | null>(null);
   const [vizRefreshKey, setVizRefreshKey] = useState(0);
   const prevStatusRef = useRef<DisplayStatus>("empty");
 
@@ -69,10 +68,9 @@ export default function KnowledgeGraphPage() {
   useEffect(() => {
     if (!datasetId || isInitializing) { setLoading(false); return; }
     setLoading(true);
-    setIframeSrc(null);
+    setIframeHtml(null);
     setError(null);
     setVizReady(false);
-    if (blobRef.current) { URL.revokeObjectURL(blobRef.current); blobRef.current = null; }
 
     const fetchViz = cogniInstance
       ? cogniInstance.fetch(`/v1/visualize?dataset_id=${datasetId}`)
@@ -92,10 +90,7 @@ export default function KnowledgeGraphPage() {
             "window._isLightMode=false;" +
             "var t=document.getElementById('theme-toggle');if(t)t.textContent='Light mode';" +
             "})()" + closeScript;
-          const blob = new Blob([html.replace("</body>", kgInject + "</body>")], { type: "text/html" });
-          const url = URL.createObjectURL(blob);
-          blobRef.current = url;
-          setIframeSrc(url);
+          setIframeHtml(html.replace("</body>", kgInject + "</body>"));
         } else {
           setError("No graph data in this brain yet.");
         }
@@ -103,8 +98,7 @@ export default function KnowledgeGraphPage() {
       .catch((err) => setError(err.message || "Failed to load visualization"))
       .finally(() => setLoading(false));
 
-    return () => { if (blobRef.current) { URL.revokeObjectURL(blobRef.current); blobRef.current = null; } };
-  }, [datasetId, isInitializing, vizRefreshKey]);
+  }, [datasetId, isInitializing, cogniInstance, vizRefreshKey]);
 
   if (isInitializing) {
     return <><TrackPageView page="Mindmap" /><div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%" }}><style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#6510F4" strokeWidth="1.5" strokeLinecap="round" style={{ animation: "spin 0.9s linear infinite" }}><path d="M21 12a9 9 0 11-6.219-8.56" /></svg></div></>;
@@ -156,15 +150,15 @@ export default function KnowledgeGraphPage() {
 
       {/* Graph visualization */}
       <div style={{ flex: 1, position: "relative", overflow: "hidden" }}>
-        {(loading || (iframeSrc && !vizReady)) && (
+        {(loading || (iframeHtml && !vizReady)) && (
           <div style={{ position: "absolute", inset: 0, zIndex: 1 }}>
             <PageLoading name="Mindmap" />
           </div>
         )}
-        {iframeSrc ? (
+        {iframeHtml ? (
           <iframe
             key={datasetId}
-            src={iframeSrc}
+            srcDoc={iframeHtml}
             onLoad={() => setTimeout(() => setVizReady(true), 250)}
             style={{ width: "100%", height: "100%", border: "none", opacity: vizReady ? 1 : 0, transition: "opacity 200ms ease" }}
             title="Mindmap Visualization"

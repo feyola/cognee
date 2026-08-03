@@ -74,6 +74,7 @@ class OpenAICompatibleEmbeddingEngine(EmbeddingEngine):
     api_key: str
     mock: bool
     batch_size: int
+    huggingface_tokenizer_name: Optional[str]
     tokenizer: object
 
     def __init__(
@@ -84,6 +85,7 @@ class OpenAICompatibleEmbeddingEngine(EmbeddingEngine):
         endpoint: Optional[str] = "http://localhost:8080",
         api_key: Optional[str] = "no-key-required",
         batch_size: int = 36,
+        huggingface_tokenizer: Optional[str] = None,
     ):
         self.model = model or "default"
         self.dimensions = dimensions
@@ -91,6 +93,7 @@ class OpenAICompatibleEmbeddingEngine(EmbeddingEngine):
         self.endpoint = endpoint or "http://localhost:8080"
         self.api_key = api_key or "no-key-required"
         self.batch_size = batch_size
+        self.huggingface_tokenizer_name = huggingface_tokenizer
         self.tokenizer = self.get_tokenizer()
 
         enable_mocking = os.getenv("MOCK_EMBEDDING", "false").lower()
@@ -248,4 +251,5 @@ class OpenAICompatibleEmbeddingEngine(EmbeddingEngine):
             provider="openai_compatible",
             model=self.model,
             max_completion_tokens=self.max_completion_tokens,
+            huggingface_tokenizer=self.huggingface_tokenizer_name,
         )

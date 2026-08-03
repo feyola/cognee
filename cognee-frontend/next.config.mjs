@@ -1,4 +1,15 @@
 /** @type {import('next').NextConfig} */
-const nextConfig = {};
+const internalApiUrl = process.env.COGNEE_INTERNAL_API_URL || "http://api:8000";
+
+const nextConfig = {
+  async rewrites() {
+    return [
+      {
+        source: "/cognee-api/:path*",
+        destination: `${internalApiUrl}/:path*`,
+      },
+    ];
+  },
+};
 
 export default nextConfig;

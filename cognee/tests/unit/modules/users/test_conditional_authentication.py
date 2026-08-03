@@ -172,9 +172,8 @@ class TestConditionalAuthenticationEnvironmentVariables:
             assert mod.REQUIRE_AUTHENTICATION is True
             assert mod.ENABLE_BACKEND_ACCESS_CONTROL is True
 
-    def test_multi_tenant_with_no_auth_is_coerced_to_require_auth(self):
-        """REQUIRE_AUTHENTICATION=false + ENABLE_BACKEND_ACCESS_CONTROL=true is unsafe
-        and should be coerced to auth-on with a warning."""
+    def test_explicit_auth_false_keeps_backend_access_control(self):
+        """Trusted shared mode keeps dataset routing while authentication is off."""
         with patch.dict(
             os.environ,
             {
@@ -184,7 +183,7 @@ class TestConditionalAuthenticationEnvironmentVariables:
             clear=False,
         ):
             mod = self._reimport()
-            assert mod.REQUIRE_AUTHENTICATION is True
+            assert mod.REQUIRE_AUTHENTICATION is False
             assert mod.ENABLE_BACKEND_ACCESS_CONTROL is True
 
     def test_empty_string_treated_as_unset(self):

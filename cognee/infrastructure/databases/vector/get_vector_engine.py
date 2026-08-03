@@ -76,6 +76,19 @@ class _VectorEngineHandle:
     def __class__(self):
         return self._engine().__class__
 
+    @property
+    def __wrapped__(self):
+        """Expose the live adapter for signature and capability inspection."""
+        engine = self._engine()
+        seen = set()
+        while id(engine) not in seen:
+            seen.add(id(engine))
+            wrapped = getattr(engine, "__wrapped__", engine)
+            if wrapped is engine:
+                break
+            engine = wrapped
+        return engine
+
     def __getattr__(self, name):
         return getattr(self._engine(), name)
 

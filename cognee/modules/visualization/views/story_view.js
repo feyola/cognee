@@ -2320,7 +2320,11 @@ function writeHash(){
     if(colorByMode!=="type")parts.push("color="+colorByMode);
     var hash=parts.length?"#"+parts.join("&"):"";
     if(hash!==location.hash){
-      history.replaceState(null,"",location.pathname+location.search+hash);
+      try {
+        history.replaceState(null,"",location.pathname+location.search+hash);
+      } catch (_) {
+        // Embedded srcdoc visualizations cannot create a normal document URL.
+      }
     }
   },200);
 }

@@ -100,8 +100,9 @@ def test_ollama_delegates_with_override():
 def test_openai_compatible_delegates_to_resolver():
     engine = _engine(
         OpenAICompatibleEmbeddingEngine,
-        model="BAAI/bge-m3",
+        model="Qwen3-Embedding-4B-Q4_K_M.gguf",
         max_completion_tokens=128,
+        huggingface_tokenizer_name="Qwen/Qwen3-Embedding-4B",
     )
     with patch(
         f"{_BASE}.OpenAICompatibleEmbeddingEngine.resolve_embedding_tokenizer",
@@ -110,6 +111,7 @@ def test_openai_compatible_delegates_to_resolver():
         assert engine.get_tokenizer() is _SENTINEL
     mock.assert_called_once_with(
         provider="openai_compatible",
-        model="BAAI/bge-m3",
+        model="Qwen3-Embedding-4B-Q4_K_M.gguf",
         max_completion_tokens=128,
+        huggingface_tokenizer="Qwen/Qwen3-Embedding-4B",
     )

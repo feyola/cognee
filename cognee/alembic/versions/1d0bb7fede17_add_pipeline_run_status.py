@@ -8,9 +8,7 @@ Create Date: 2025-05-19 10:58:15.993314
 from typing import Sequence, Union
 
 from alembic import op
-
-from cognee.infrastructure.databases.relational.get_relational_engine import get_relational_engine
-from cognee.modules.pipelines.models.PipelineRun import PipelineRun, PipelineRunStatus
+import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
@@ -21,9 +19,15 @@ depends_on: Union[str, Sequence[str], None] = "482cd6517ce4"
 
 
 def upgrade() -> None:
-    db_engine = get_relational_engine()
+    bind = op.get_bind()
 
-    if db_engine.engine.dialect.name == "postgresql":
+    if bind.dialect.name == "postgresql":
+        type_exists = bind.execute(
+            sa.text("SELECT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'pipelinerunstatus')")
+        ).scalar()
+        if not type_exists:
+            return
+
         op.execute(
             "ALTER TYPE pipelinerunstatus ADD VALUE IF NOT EXISTS 'DATASET_PROCESSING_INITIATED'"
         )

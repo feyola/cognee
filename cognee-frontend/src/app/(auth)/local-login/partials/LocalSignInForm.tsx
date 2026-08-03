@@ -6,12 +6,11 @@ import AuthCard from "@/ui/elements/Auth/AuthCard";
 
 const localApiUrl = process.env.NEXT_PUBLIC_LOCAL_API_URL || "http://localhost:8000";
 
-const DEFAULT_EMAIL = "default_user@example.com";
-const DEFAULT_PASSWORD = "default_password";
+const DEFAULT_EMAIL = process.env.NEXT_PUBLIC_DEFAULT_USER_EMAIL || "";
 
 export default function LocalSignInForm() {
   const [email, setEmail] = useState(DEFAULT_EMAIL);
-  const [password, setPassword] = useState(DEFAULT_PASSWORD);
+  const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
@@ -120,10 +119,6 @@ export default function LocalSignInForm() {
             innerInput: "!text-[#EDECEA]",
           }}
         />
-
-        <Text size="xs" className="!text-[#EDECEA]/60 !font-light" mt={-4}>
-          Default credentials are pre-filled for local development
-        </Text>
 
         <Button
           type="submit"

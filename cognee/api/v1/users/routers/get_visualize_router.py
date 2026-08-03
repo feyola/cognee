@@ -1,6 +1,7 @@
+import os
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
 from uuid import UUID
@@ -10,7 +11,8 @@ from cognee.modules.visualization.subgraph_data import (
     DEFAULT_NEIGHBORHOOD_DEPTH,
     DEFAULT_SEED_TOP_K,
 )
-from cognee.modules.users.methods import get_authenticated_user, get_user
+from cognee.modules.users.get_fastapi_users import get_fastapi_users
+from cognee.modules.users.methods import get_default_user, get_user
 from cognee.modules.data.methods import get_authorized_existing_datasets
 from cognee.modules.users.models import User
 
@@ -18,6 +20,23 @@ from cognee.shared.utils import send_telemetry
 from cognee import __version__ as cognee_version
 
 logger = get_logger()
+
+
+optional_visualize_user = get_fastapi_users().current_user(active=True, optional=True)
+
+
+def _allow_unauthenticated_local_visualize() -> bool:
+    return os.getenv("ALLOW_UNAUTHENTICATED_LOCAL_VISUALIZE", "").lower() == "true"
+
+
+async def get_visualize_user(user: Optional[User] = Depends(optional_visualize_user)) -> User:
+    if user is not None:
+        return await get_user(user.id)
+
+    if _allow_unauthenticated_local_visualize():
+        return await get_default_user()
+
+    raise HTTPException(status_code=401, detail="Unauthorized")
 
 
 class UserDatasetPair(BaseModel):
@@ -80,7 +99,7 @@ def get_visualize_router() -> APIRouter:
             le=5000,
             description="Hard cap on rendered nodes after expansion.",
         ),
-        user: User = Depends(get_authenticated_user),
+        user: User = Depends(get_visualize_user),
     ):
         """
         Generate an HTML visualization of the dataset's knowledge graph.
@@ -146,7 +165,7 @@ def get_visualize_router() -> APIRouter:
     @router.post("/multi", response_model=None)
     async def visualize_multi(
         pairs: List[UserDatasetPair],
-        user: User = Depends(get_authenticated_user),
+        user: User = Depends(get_visualize_user),
     ):
         """
         Generate a combined HTML visualization of graph data from multiple users' datasets.

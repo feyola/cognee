@@ -1,4 +1,3 @@
-import { clearInitCache } from "./initCache";
 import persistSelectedTenant from "./persistSelectedTenant";
 
 // Read by useTenantInit.ts's connectToSelectedTenant on the other side of the
@@ -60,7 +59,8 @@ export default function switchTenant(
   navigateTo?: string,
   isFreshlyCreated?: boolean,
 ): void {
-  clearInitCache();
+  // The open-source frontend has no SaaS tenant-initialization cache. A full
+  // reload below is sufficient to reset its local provider state.
   persistSelectedTenant(tenantId, tenantName);
   if (isFreshlyCreated) {
     markFreshlyCreatedTenant(tenantId);

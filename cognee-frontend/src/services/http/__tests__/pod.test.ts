@@ -1,3 +1,5 @@
+/** @jest-environment node */
+
 import { createPodClient } from "../pod";
 
 function mockFetch(status = 200, body: unknown = {}) {
@@ -97,11 +99,11 @@ describe("createPodClient — credentials", () => {
     expect(calledInit().credentials).toBe("omit");
   });
 
-  it("caller can override credentials", async () => {
+  it("caller cannot enable ambient credentials", async () => {
     mockFetch();
     const client = createPodClient("https://pod.example.com", "key");
     await client.fetch("/path", { credentials: "include" });
-    expect(calledInit().credentials).toBe("include");
+    expect(calledInit().credentials).toBe("omit");
   });
 });
 
