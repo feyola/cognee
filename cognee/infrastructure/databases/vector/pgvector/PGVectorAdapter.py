@@ -21,6 +21,7 @@ from distributed.utils import override_distributed
 from distributed.tasks.queued_add_data_points import queued_add_data_points
 from cognee.infrastructure.databases.exceptions import MissingQueryParameterError
 from cognee.context_global_variables import backend_access_control_enabled
+from cognee.modules.graph.methods.sanitize_relational_payload import sanitize_relational_payload
 
 from ...relational.ModelBase import Base
 from ...relational.sqlalchemy.SqlAlchemyAdapter import SQLAlchemyAdapter
@@ -34,8 +35,10 @@ logger = get_logger("PGVectorAdapter")
 QUERY_BATCH_SIZE = 1000
 
 # Default pool sizing for per-dataset PGVector engines when ENABLE_BACKEND_ACCESS_CONTROL=True.
-# Much smaller than the relational default (20+20) to limit connection fan-out across datasets.
-_ACCESS_CONTROL_DEFAULT_POOL_ARGS = {"pool_size": 2, "max_overflow": 2}
+# Lean pool_size limits connection fan-out across datasets (only pool_size connections are
+# retained while idle); the large max_overflow keeps burst headroom, since overflow
+# connections close on release instead of idling.
+_ACCESS_CONTROL_DEFAULT_POOL_ARGS = {"pool_size": 2, "max_overflow": 20}
 
 
 class IndexSchema(DataPoint):
@@ -314,7 +317,9 @@ class PGVectorAdapter(SQLAlchemyAdapter, VectorDBInterface):
                 PGVectorDataPoint(
                     id=data_point.id,
                     vector=data_vectors[data_index],
-                    payload=serialize_data(data_point.model_dump()),
+                    # Strip NUL bytes: the json column accepts \u0000 on insert, but
+                    # the payload::jsonb casts in search/merge queries reject it.
+                    payload=sanitize_relational_payload(serialize_data(data_point.model_dump())),
                 )
             )
 
@@ -429,8 +434,19 @@ class PGVectorAdapter(SQLAlchemyAdapter, VectorDBInterface):
             f"Collection '{collection_name}' not found!",
         )
 
-    async def retrieve(self, collection_name: str, data_point_ids: List[str]):
-        """Return rows from `collection_name` matching any of `data_point_ids`."""
+    async def retrieve(
+        self,
+        collection_name: str,
+        data_point_ids: List[str],
+        *,
+        include_vector: bool = False,
+    ):
+        """Return rows from ``collection_name`` matching ``data_point_ids``.
+
+        When ``include_vector`` is true, attach the stored embedding to a copy
+        of the result payload.  Visualization uses this path to avoid
+        re-embedding every displayed graph node.
+        """
         # Get PGVectorDataPoint Table from database
         try:
             PGVectorDataPoint = await self.get_table(collection_name)
@@ -456,7 +472,13 @@ class PGVectorAdapter(SQLAlchemyAdapter, VectorDBInterface):
                 unique_results.append(result)
 
             return [
-                ScoredResult(id=parse_id(result.id), payload=result.payload, score=0)
+                ScoredResult(
+                    id=parse_id(result.id),
+                    payload={**(result.payload or {}), "vector": list(result.vector)}
+                    if include_vector
+                    else result.payload,
+                    score=0,
+                )
                 for result in unique_results
             ]
 

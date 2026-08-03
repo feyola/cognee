@@ -250,6 +250,7 @@ export default function GraphVisualization({ ref, data, graphControls, className
 
           onNodeClick={handleNodeClick}
           onBackgroundClick={handleBackgroundClick}
+          onNodeDragEnd={(node) => { node.fx = node.x; node.fy = node.y; }}
           d3VelocityDecay={0.3}
         />
       ) : (

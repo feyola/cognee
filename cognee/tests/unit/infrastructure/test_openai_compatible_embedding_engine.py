@@ -88,6 +88,22 @@ class TestOpenAICompatibleEmbeddingEngine:
         engine = self._make_engine(max_completion_tokens=2048)
         assert engine.max_completion_tokens == 2048
 
+    def test_huggingface_tokenizer_override_is_forwarded(self):
+        """Local model aliases can select their matching Hugging Face tokenizer."""
+        with patch(
+            "cognee.infrastructure.databases.vector.embeddings."
+            "OpenAICompatibleEmbeddingEngine.resolve_embedding_tokenizer"
+        ) as resolver:
+            resolver.return_value = MagicMock()
+            self._make_engine(huggingface_tokenizer="Qwen/Qwen3-Embedding-4B")
+
+        resolver.assert_called_once_with(
+            provider="openai_compatible",
+            model="test-model",
+            max_completion_tokens=8191,
+            huggingface_tokenizer="Qwen/Qwen3-Embedding-4B",
+        )
+
     def test_endpoint_normalization(self):
         """Endpoint without /v1 gets /v1 appended for the SDK base_url."""
         engine = self._make_engine(endpoint="http://localhost:8099")

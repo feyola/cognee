@@ -63,6 +63,8 @@ class CloudClient:
         form = aiohttp.FormData()
         form.add_field("datasetName", dataset_name)
 
+        if kwargs.get("dataset_id"):
+            form.add_field("datasetId", str(kwargs["dataset_id"]))
         if kwargs.get("session_id"):
             form.add_field("session_id", kwargs["session_id"])
         if kwargs.get("run_in_background"):
@@ -331,6 +333,8 @@ class CloudClient:
             payload["maxIter"] = kwargs["max_iter"]
         if kwargs.get("include_references") is not None:
             payload["includeReferences"] = kwargs["include_references"]
+        if kwargs.get("code_query") is not None:
+            payload["codeQuery"] = kwargs["code_query"]
 
         async with session.post(
             f"{self.service_url}/api/v1/search",

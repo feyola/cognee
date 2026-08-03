@@ -23,17 +23,26 @@ def _resolve_auth_posture() -> tuple[bool, bool, str]:
         If unset, it inherits from ``ENABLE_BACKEND_ACCESS_CONTROL`` — turning
         off backend access control disables the auth requirement, matching
         single-user / internal-deployment expectations.
-      * Invariant: multi-tenant mode requires authentication. Setting
-        ``REQUIRE_AUTHENTICATION=false`` together with
-        ``ENABLE_BACKEND_ACCESS_CONTROL=true`` is a misconfiguration; we log
-        a warning and force auth on to keep per-user data isolated.
+      * An explicit ``REQUIRE_AUTHENTICATION=false`` enables trusted shared
+        access through the default user while retaining dataset database
+        routing. Leaving it unset preserves the secure multi-tenant default.
     """
 
     def _read_bool(name: str) -> tuple[Optional[bool], bool]:
         raw = os.environ.get(name)
         if raw is None or raw == "":
             return None, False
-        return raw.lower() == "true", True
+        normalized = raw.strip().lower()
+        if normalized == "true":
+            return True, True
+        if normalized == "false":
+            return False, True
+        logger.warning(
+            "%s has invalid boolean value %r; treating it as true to fail closed",
+            name,
+            raw,
+        )
+        return True, True
 
     access_value, access_explicit = _read_bool("ENABLE_BACKEND_ACCESS_CONTROL")
     require_value, require_explicit = _read_bool("REQUIRE_AUTHENTICATION")
@@ -43,18 +52,7 @@ def _resolve_auth_posture() -> tuple[bool, bool, str]:
     if require_explicit:
         assert require_value is not None  # require_explicit implies a parsed value
         require_authentication = require_value
-        if enable_access_control and not require_authentication:
-            logger.warning(
-                "REQUIRE_AUTHENTICATION=false is incompatible with "
-                "ENABLE_BACKEND_ACCESS_CONTROL=true: multi-tenant mode requires "
-                "authentication. Forcing REQUIRE_AUTHENTICATION=true. "
-                "To disable auth for a single-user deployment, also set "
-                "ENABLE_BACKEND_ACCESS_CONTROL=false."
-            )
-            require_authentication = True
-            reason = "forced on by multi-tenant mode (REQUIRE_AUTHENTICATION=false was ignored)"
-        else:
-            reason = "explicit REQUIRE_AUTHENTICATION"
+        reason = "explicit REQUIRE_AUTHENTICATION"
     else:
         require_authentication = enable_access_control
         reason = (

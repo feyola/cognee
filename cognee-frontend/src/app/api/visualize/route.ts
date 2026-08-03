@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const localApiUrl = process.env.NEXT_PUBLIC_LOCAL_API_URL || "http://localhost:8000";
+const localApiUrl = process.env.COGNEE_INTERNAL_API_URL || "http://api:8000";
 
 export async function GET(request: NextRequest) {
   const datasetId = request.nextUrl.searchParams.get("dataset_id");
@@ -16,23 +16,6 @@ export async function GET(request: NextRequest) {
   if (authHeader) headers["authorization"] = authHeader;
   const apiKey = request.headers.get("x-api-key");
   if (apiKey) headers["x-api-key"] = apiKey;
-
-  // If no auth available from headers, try to login as default user server-side
-  if (!cookie && !authHeader && !apiKey) {
-    try {
-      const loginResp = await fetch(`${localApiUrl}/api/v1/auth/login`, {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: "username=default_user@example.com&password=default_password",
-      });
-      if (loginResp.ok) {
-        const data = await loginResp.json();
-        headers["authorization"] = `Bearer ${data.access_token}`;
-      }
-    } catch {
-      // Fall through
-    }
-  }
 
   try {
     const response = await fetch(
