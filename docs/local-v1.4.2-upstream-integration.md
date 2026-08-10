@@ -1,7 +1,7 @@
 # Local v1.4.2 upstream integration
 
 This fork merges the immutable upstream Cognee `v1.4.2` tag at
-`b0ea53e95603ba79ebbc3df798babb58f953ac58` into the self-hosted reliable-stack
+`b0ea53e95caa7bfebf373ffabfbafb44f9fff922` into the self-hosted reliable-stack
 baseline merged by fork PR #1. The merge preserves upstream ancestry so later
 release comparisons do not replay or duplicate the local patches.
 
