@@ -99,7 +99,7 @@ def fuse_chunk_results(
     if len(selected) < top_k and max_chunks_per_page > 1:
         selected_ids = {candidate.identity for _, candidate in selected}
         query_tokens = {
-            token for token in normalize_search_text(query).split() if len(token) >= 6
+            token for token in normalize_search_text(query).split() if len(token) >= 4
         }
         page_query_coverage: dict[str, set[str]] = {}
         for _, candidate in selected:
@@ -127,7 +127,7 @@ def fuse_chunk_results(
                     & query_tokens
                     - page_query_coverage.get(page, set())
                 )
-                return relevance + min(2, len(novel)) * 0.012, relevance, candidate.identity
+                return relevance + min(3, len(novel)) * 0.012, relevance, candidate.identity
 
             relevance, candidate = max(eligible, key=secondary_score)
             page = canonical_page_key(candidate.payload, candidate.identity)

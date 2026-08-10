@@ -162,6 +162,36 @@ def test_secondary_chunk_adds_uncovered_query_aspect_within_selected_page():
     assert all("changes a current system" not in body for body in bodies)
 
 
+def test_secondary_chunk_prefers_more_uncovered_query_aspects():
+    url = "https://wiki.eveuniversity.org/Trading"
+    primary = _result(
+        _text("Trading", url=url, body="Station trading profitability depends on margins.")
+    )
+    skills = _result(
+        _text("Trading", url=url, body="Skills reduce trading overhead."),
+    )
+    taxes = _result(
+        _text(
+            "Trading",
+            url=url,
+            body="Sales tax is 7.5% and broker fees are reduced by Accounting.",
+        )
+    )
+
+    results = fuse_chunk_results(
+        "sales tax broker fees affect station trading profitability skills reduce",
+        [primary, skills, taxes],
+        [],
+        top_k=2,
+        page_limit=1,
+        max_chunks_per_page=2,
+    )
+
+    bodies = [result.payload["text"] for result in results]
+    assert any("Sales tax is 7.5%" in body for body in bodies)
+    assert all("Skills reduce trading overhead" not in body for body in bodies)
+
+
 def test_historical_body_is_excluded_but_status_warning_remains_discoverable():
     status = _result(_text("Reprocessing", active=False, kind="status"))
     historical = _result(
