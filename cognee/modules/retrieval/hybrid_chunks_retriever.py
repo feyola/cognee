@@ -98,17 +98,45 @@ def fuse_chunk_results(
 
     if len(selected) < top_k and max_chunks_per_page > 1:
         selected_ids = {candidate.identity for _, candidate in selected}
-        for relevance, candidate in ranked:
-            if candidate.identity in selected_ids:
-                continue
+        query_tokens = {
+            token for token in normalize_search_text(query).split() if len(token) >= 6
+        }
+        page_query_coverage: dict[str, set[str]] = {}
+        for _, candidate in selected:
             page = canonical_page_key(candidate.payload, candidate.identity)
-            if page not in selected_pages or page_counts[page] >= max_chunks_per_page:
-                continue
+            page_query_coverage.setdefault(page, set()).update(
+                _answer_body_tokens(candidate.payload) & query_tokens
+            )
+        while len(selected) < top_k:
+            eligible = [
+                (relevance, candidate)
+                for relevance, candidate in ranked
+                if candidate.identity not in selected_ids
+                and (page := canonical_page_key(candidate.payload, candidate.identity))
+                in selected_pages
+                and page_counts[page] < max_chunks_per_page
+            ]
+            if not eligible:
+                break
+
+            def secondary_score(value: tuple[float, _Candidate]) -> tuple[float, float, str]:
+                relevance, candidate = value
+                page = canonical_page_key(candidate.payload, candidate.identity)
+                novel = (
+                    _answer_body_tokens(candidate.payload)
+                    & query_tokens
+                    - page_query_coverage.get(page, set())
+                )
+                return relevance + min(2, len(novel)) * 0.012, relevance, candidate.identity
+
+            relevance, candidate = max(eligible, key=secondary_score)
+            page = canonical_page_key(candidate.payload, candidate.identity)
             selected.append((relevance, candidate))
             selected_ids.add(candidate.identity)
             page_counts[page] += 1
-            if len(selected) >= top_k:
-                break
+            page_query_coverage.setdefault(page, set()).update(
+                _answer_body_tokens(candidate.payload) & query_tokens
+            )
 
     return _bound_results(selected, max_context_chars=max_context_chars)
 
@@ -221,6 +249,12 @@ def _hybrid_relevance(query: str, candidate: _Candidate) -> float:
 def _status_stub(payload: dict[str, Any]) -> bool:
     metadata = parse_json_front_matter(payload.get("text"))
     return metadata.get("chunk_kind") == "status" or metadata.get("content_excluded") is True
+
+
+def _answer_body_tokens(payload: dict[str, Any]) -> set[str]:
+    """Return normalized answer-bearing tokens without front-matter matches."""
+    _metadata, body = split_json_front_matter(payload.get("text"))
+    return set(normalize_search_text(body).split())
 
 
 def _historical_body(payload: dict[str, Any]) -> bool:

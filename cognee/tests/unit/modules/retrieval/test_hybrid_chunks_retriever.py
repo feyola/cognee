@@ -121,6 +121,47 @@ def test_primary_slots_are_canonical_page_diverse_then_retain_extra_chunks():
     assert answer_pages.count(trading_url) == 2
 
 
+def test_secondary_chunk_adds_uncovered_query_aspect_within_selected_page():
+    url = "https://wiki.eveuniversity.org/Insurgency"
+    primary = _result(
+        _text(
+            "Insurgency",
+            url=url,
+            aliases=["Faction warfare"],
+            body="Current faction warfare activity lets militias stage ships.",
+        )
+    )
+    repetitive = _result(
+        _text(
+            "Insurgency",
+            url=url,
+            aliases=["Faction warfare"],
+            body="Faction warfare activity changes a current system.",
+        )
+    )
+    rewards = _result(
+        _text(
+            "Insurgency",
+            url=url,
+            aliases=["Faction warfare"],
+            body="Winning pilots receive ISK and loyalty points.",
+        )
+    )
+
+    results = fuse_chunk_results(
+        "current faction warfare activity create loyalty point ship demand",
+        [primary, repetitive, rewards],
+        [],
+        top_k=2,
+        page_limit=1,
+        max_chunks_per_page=2,
+    )
+
+    bodies = [result.payload["text"] for result in results]
+    assert any("loyalty points" in body for body in bodies)
+    assert all("changes a current system" not in body for body in bodies)
+
+
 def test_historical_body_is_excluded_but_status_warning_remains_discoverable():
     status = _result(_text("Reprocessing", active=False, kind="status"))
     historical = _result(
