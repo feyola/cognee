@@ -144,6 +144,18 @@ def test_format_chunk_references_snippet_truncated():
     assert "…" in result
 
 
+def test_front_matter_title_and_canonical_url_override_generic_document_name():
+    text = (
+        '---\ntitle: "Trading"\n'
+        'canonical_url: "https://wiki.eveuniversity.org/Trading"\n---\n\n'
+        "Sales tax is 7.5 percent."
+    )
+
+    result = format_chunk_references([_payload(text=text, chunk_index=6)])
+
+    assert "- Trading: https://wiki.eveuniversity.org/Trading (chunk 7)" in result
+
+
 # ---------------------------------------------------------------------------
 # format_chunk_references (answer-grounded filtering and ranking)
 # ---------------------------------------------------------------------------

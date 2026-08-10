@@ -1,18 +1,26 @@
 from typing import Any, Dict, List, Optional, Type
 
 from cognee.shared.logging_utils import get_logger
-from cognee.infrastructure.databases.vector import get_vector_engine_async
 from cognee.modules.retrieval.utils.completion import generate_completion
 from cognee.infrastructure.session.get_session_manager import get_session_manager
 from cognee.modules.retrieval.base_retriever import BaseRetriever
 from cognee.modules.retrieval.utils.used_graph_elements import extract_from_scored_results
-from cognee.modules.retrieval.exceptions.exceptions import NoDataError
-from cognee.infrastructure.databases.vector.exceptions import CollectionNotFoundError
 from cognee.context_global_variables import session_user
 from cognee.infrastructure.databases.cache.config import CacheConfig
 from cognee.modules.retrieval.utils.references import append_chunk_evidence
+from cognee.modules.retrieval.hybrid_chunks_retriever import (
+    DEFAULT_CANDIDATE_POOL,
+    DEFAULT_MAX_CONTEXT_CHARS,
+    HybridChunksRetriever,
+)
 
 logger = get_logger("CompletionRetriever")
+
+CURRENTNESS_GUIDANCE = (
+    "Retrieval policy: use active answer-bearing content. Status chunks are warnings, not "
+    "answers. If facts conflict, prefer the most specific section whose heading matches the "
+    "question; do not silently combine contradictory values.\n\n"
+)
 
 
 class CompletionRetriever(BaseRetriever):
@@ -31,6 +39,9 @@ class CompletionRetriever(BaseRetriever):
         include_references: bool = False,
         node_name: Optional[List[str]] = None,
         node_name_filter_operator: str = "OR",
+        candidate_pool_size: int = DEFAULT_CANDIDATE_POOL,
+        max_context_chars: int = DEFAULT_MAX_CONTEXT_CHARS,
+        max_chunks_per_page: int = 2,
     ):
         """Initialize retriever with optional custom prompt paths."""
         self.user_prompt_path = user_prompt_path
@@ -42,24 +53,25 @@ class CompletionRetriever(BaseRetriever):
         self.include_references = include_references
         self.node_name = node_name
         self.node_name_filter_operator = node_name_filter_operator
+        self.candidate_pool_size = candidate_pool_size
+        self.max_context_chars = max_context_chars
+        self.max_chunks_per_page = max_chunks_per_page
 
     async def get_retrieved_objects(self, query: str) -> Any:
-        vector_engine = await get_vector_engine_async()
-
-        try:
-            found_chunks = await vector_engine.search(
-                "DocumentChunk_text",
-                query,
-                limit=self.top_k,
-                include_payload=True,
-                node_name=self.node_name,
-                node_name_filter_operator=self.node_name_filter_operator,
-            )
-
-            return found_chunks
-        except CollectionNotFoundError as error:
-            logger.error("DocumentChunk_text collection not found")
-            raise NoDataError("No data found in the system, please add data first.") from error
+        candidate_context_limit = max(
+            1,
+            self.max_context_chars - len(CURRENTNESS_GUIDANCE),
+        )
+        retriever = HybridChunksRetriever(
+            top_k=self.top_k,
+            node_name=self.node_name,
+            node_name_filter_operator=self.node_name_filter_operator,
+            candidate_pool_size=self.candidate_pool_size,
+            page_limit=min(3, self.top_k),
+            max_chunks_per_page=self.max_chunks_per_page,
+            max_context_chars=candidate_context_limit,
+        )
+        return await retriever.get_retrieved_objects(query)
 
     def _extract_context_object_ids(self, retrieved_objects: Any) -> Optional[Dict[str, List[str]]]:
         """Extract node_ids from ScoredResult-like list for session QA."""
@@ -89,7 +101,7 @@ class CompletionRetriever(BaseRetriever):
         if retrieved_objects:
             # Combine all chunks text returned from vector search (number of chunks is determined by top_k)
             chunks_payload = [found_chunk.payload["text"] for found_chunk in retrieved_objects]
-            combined_context = "\n".join(chunks_payload)
+            combined_context = CURRENTNESS_GUIDANCE + "\n".join(chunks_payload)
             return combined_context
         return ""
 

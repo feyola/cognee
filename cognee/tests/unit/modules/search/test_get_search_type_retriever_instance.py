@@ -340,6 +340,24 @@ async def test_chunks_lexical_returns_bm25_retriever():
 
 
 @pytest.mark.asyncio
+async def test_chunks_hybrid_returns_page_diverse_retriever():
+    import cognee.modules.search.methods.get_search_type_retriever_instance as mod
+    from cognee.modules.retrieval.hybrid_chunks_retriever import HybridChunksRetriever
+
+    retriever_instance = await mod.get_search_type_retriever_instance(
+        SearchType.CHUNKS_HYBRID,
+        query_text="q",
+        top_k=3,
+        node_name=["public"],
+    )
+
+    assert isinstance(retriever_instance, HybridChunksRetriever)
+    assert retriever_instance.top_k == 3
+    assert retriever_instance.node_name == ["public"]
+    assert retriever_instance.max_chunks_per_page == 1
+
+
+@pytest.mark.asyncio
 async def test_coding_rules_uses_node_name_as_rules_nodeset_name():
     import cognee.modules.search.methods.get_search_type_retriever_instance as mod
     from cognee.modules.retrieval.coding_rules_retriever import CodingRulesRetriever

@@ -22,6 +22,7 @@ import re
 from typing import Any, List, Optional, Set, Tuple
 
 from cognee.shared.logging_utils import get_logger
+from cognee.modules.retrieval.utils.chunk_metadata import parse_json_front_matter
 
 logger = get_logger("references")
 
@@ -216,8 +217,8 @@ def format_chunk_references(
             # rather than presenting unverifiable retrieval order as provenance.
             return ""
 
-    # (overlap_score, document_name, number, text, data_id, chunk_id) per candidate.
-    candidates: List[Tuple[int, str, int, str, Optional[str], Optional[str]]] = []
+    # (overlap, document name, canonical URL, number, text, data id, chunk id).
+    candidates: List[Tuple[int, str, Optional[str], int, str, Optional[str], Optional[str]]] = []
     seen: set = set()
 
     for obj in iterator:
@@ -225,7 +226,11 @@ def format_chunk_references(
         if payload is None:
             continue
 
-        document_name = _clean_str(payload.get("document_name"))
+        metadata = parse_json_front_matter(payload.get("text"))
+        document_name = _clean_str(metadata.get("title")) or _clean_str(
+            payload.get("document_name")
+        )
+        canonical_url = _clean_str(metadata.get("canonical_url"))
         number = _chunk_number(payload)
         text = _clean_str(payload.get("text"))
 
@@ -254,7 +259,7 @@ def format_chunk_references(
                 # certainly not a source of the answer.
                 continue
 
-        candidates.append((score, document_name, number, text, data_id, chunk_id))
+        candidates.append((score, document_name, canonical_url, number, text, data_id, chunk_id))
 
     if not candidates:
         return ""
@@ -265,9 +270,15 @@ def format_chunk_references(
 
     max_bullets = _clamp_limit(limit)
     bullets = [
-        f"- chunk {number} of document {document_name}"
-        f'{_provenance_suffix(data_id, chunk_id)}: "{_snippet(text)}"'
-        for _, document_name, number, text, data_id, chunk_id in candidates[:max_bullets]
+        (
+            f"- {document_name}: {canonical_url} (chunk {number})"
+            if canonical_url
+            else f"- chunk {number} of document {document_name}"
+        )
+        + f'{_provenance_suffix(data_id, chunk_id)}: "{_snippet(text)}"'
+        for _, document_name, canonical_url, number, text, data_id, chunk_id in candidates[
+            :max_bullets
+        ]
     ]
 
     return EVIDENCE_HEADER + "\n" + "\n".join(bullets)

@@ -22,6 +22,7 @@ from cognee.modules.retrieval.graph_completion_decomposition_retriever import (
 from cognee.modules.retrieval.temporal_retriever import TemporalRetriever
 from cognee.modules.retrieval.coding_rules_retriever import CodingRulesRetriever
 from cognee.modules.retrieval.bm25_retriever import BM25ChunksRetriever
+from cognee.modules.retrieval.hybrid_chunks_retriever import HybridChunksRetriever
 from cognee.modules.retrieval.graph_summary_completion_retriever import (
     GraphSummaryCompletionRetriever,
 )
@@ -101,6 +102,9 @@ async def get_search_type_retriever_instance(
                 "include_references": include_references,
                 "node_name": node_name,
                 "node_name_filter_operator": node_name_filter_operator,
+                "candidate_pool_size": retriever_specific_config.get("candidate_pool_size", 30),
+                "max_context_chars": retriever_specific_config.get("max_context_chars", 15_000),
+                "max_chunks_per_page": retriever_specific_config.get("max_chunks_per_page", 2),
             },
         ),
         SearchType.HYBRID_COMPLETION: (
@@ -309,6 +313,16 @@ async def get_search_type_retriever_instance(
             },
         ),
         SearchType.CHUNKS_LEXICAL: (BM25ChunksRetriever, {"top_k": top_k}),
+        SearchType.CHUNKS_HYBRID: (
+            HybridChunksRetriever,
+            {
+                "top_k": top_k,
+                "node_name": node_name,
+                "node_name_filter_operator": node_name_filter_operator,
+                "candidate_pool_size": retriever_specific_config.get("candidate_pool_size", 30),
+                "max_context_chars": retriever_specific_config.get("max_context_chars", 15_000),
+            },
+        ),
         SearchType.CODING_RULES: (
             CodingRulesRetriever,
             {"rules_nodeset_name": node_name},
