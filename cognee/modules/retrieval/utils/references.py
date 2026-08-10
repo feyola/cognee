@@ -232,6 +232,8 @@ def format_chunk_references(
         )
         canonical_url = _clean_str(metadata.get("canonical_url"))
         number = _chunk_number(payload)
+        if number is None:
+            number = _chunk_number(metadata)
         text = _clean_str(payload.get("text"))
 
         # Document name and a chunk number are both required to ground the
@@ -243,7 +245,9 @@ def format_chunk_references(
         # document_id == the ingested Data item's id (cognify sets
         # Document.id = data.id), i.e. the dataId a caller needs to map a
         # citation back to the document they ingested.
-        data_id = _clean_str(payload.get("document_id"))
+        data_id = _clean_str(payload.get("document_id")) or _clean_str(
+            metadata.get("document_id")
+        )
 
         dedup_key = chunk_id or f"{document_name}#{number}"
         if dedup_key in seen:

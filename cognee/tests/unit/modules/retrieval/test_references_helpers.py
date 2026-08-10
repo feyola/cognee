@@ -156,6 +156,23 @@ def test_front_matter_title_and_canonical_url_override_generic_document_name():
     assert "- Trading: https://wiki.eveuniversity.org/Trading (chunk 7)" in result
 
 
+def test_front_matter_preserves_chunk_index_and_document_id():
+    text = (
+        '---\ndocument_id: "mediawiki:131:9001:chunk:0007"\n'
+        'title: "Trading"\n'
+        'canonical_url: "https://wiki.eveuniversity.org/Trading"\n'
+        "chunk_index: 7\n---\n\n"
+        "Sales tax is 7.5 percent."
+    )
+    payload = _payload(text=text)
+    del payload["chunk_index"]
+
+    result = format_chunk_references([payload])
+
+    assert "Trading: https://wiki.eveuniversity.org/Trading (chunk 8)" in result
+    assert "data_id: mediawiki:131:9001:chunk:0007" in result
+
+
 # ---------------------------------------------------------------------------
 # format_chunk_references (answer-grounded filtering and ranking)
 # ---------------------------------------------------------------------------
