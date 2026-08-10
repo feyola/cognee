@@ -169,8 +169,30 @@ def test_front_matter_preserves_chunk_index_and_document_id():
 
     result = format_chunk_references([payload])
 
-    assert "Trading: https://wiki.eveuniversity.org/Trading (chunk 8)" in result
-    assert "data_id: mediawiki:131:9001:chunk:0007" in result
+    assert "Trading: https://wiki.eveuniversity.org/Trading (source chunk 0007)" in result
+    assert "source_id: mediawiki:131:9001:chunk:0007" in result
+
+
+def test_front_matter_is_removed_from_overlap_and_supporting_snippet():
+    text = (
+        '---\ndocument_id: "mediawiki:131:9001:chunk:0006"\n'
+        'title: "Trading"\n'
+        'canonical_url: "https://wiki.eveuniversity.org/Trading"\n'
+        "chunk_index: 6\n---\n\n"
+        "> extraction-solutions provenance: source_item_id=item\n\n"
+        "# Trading\n\nSales tax is 7.5% and Accounting reduces it to 3.37%."
+    )
+    result = format_chunk_references(
+        [_payload(text=text, document_id="data-123", id="chunk-123")],
+        answer="Sales tax is 7.5% and Accounting reduces it to 3.37%.",
+    )
+
+    assert "source chunk 0006" in result
+    assert "source_id: mediawiki:131:9001:chunk:0006" in result
+    assert "data_id: data-123" in result
+    assert "chunk_id: chunk-123" in result
+    assert '"# Trading Sales tax is 7.5% and Accounting reduces it to 3.37%."' in result
+    assert '"--- document_id:' not in result
 
 
 # ---------------------------------------------------------------------------

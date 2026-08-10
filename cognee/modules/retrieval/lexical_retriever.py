@@ -25,7 +25,13 @@ def tokenize_words(text: str, stop_words: Optional[set[str]] = None) -> list[str
 
 class LexicalRetriever(BaseRetriever):
     def __init__(
-        self, tokenizer: Callable, scorer: Callable, top_k: int = 15, with_scores: bool = False
+        self,
+        tokenizer: Callable,
+        scorer: Callable,
+        top_k: int = 15,
+        with_scores: bool = False,
+        node_name: Optional[list[str]] = None,
+        node_name_filter_operator: str = "OR",
     ):
         if not callable(tokenizer) or not callable(scorer):
             raise TypeError("tokenizer and scorer must be callables")
@@ -36,6 +42,10 @@ class LexicalRetriever(BaseRetriever):
         self.scorer = scorer
         self.top_k = top_k
         self.with_scores = bool(with_scores)
+        self.node_name = list(node_name) if node_name else None
+        self.node_name_filter_operator = node_name_filter_operator.strip().upper()
+        if self.node_name_filter_operator not in {"AND", "OR"}:
+            raise ValueError("node_name_filter_operator must be AND or OR")
 
         # Cache keyed by dataset context
         self.chunks: dict[str, Any] = {}  # {chunk_id: tokens}
@@ -109,6 +119,12 @@ class LexicalRetriever(BaseRetriever):
 
         results = []
         for chunk_id, chunk_tokens in self.chunks.items():
+            if not _matches_node_names(
+                self.payloads[chunk_id],
+                self.node_name,
+                self.node_name_filter_operator,
+            ):
+                continue
             try:
                 score = self.scorer(query_tokens, chunk_tokens)
                 if not isinstance(score, (int, float)):
@@ -131,7 +147,6 @@ class LexicalRetriever(BaseRetriever):
             return [(self.payloads[chunk_id], score) for chunk_id, score in top_results]
         else:
             return [self.payloads[chunk_id] for chunk_id, _ in top_results]
-
     async def get_context_from_objects(self, query: str, retrieved_objects: Any) -> str:
         """
         Retrieves context from retrieved chunks, in text form.
@@ -177,3 +192,22 @@ class LexicalRetriever(BaseRetriever):
         """
         # TODO: Do we want to generate a completion using LLM here?
         return retrieved_objects
+
+
+def _matches_node_names(
+    payload: dict[str, Any], node_names: Optional[list[str]], operator: str
+) -> bool:
+    """Apply the same AND/OR node-set contract used by vector retrieval."""
+    if not node_names:
+        return True
+    raw = payload.get("belongs_to_set")
+    if isinstance(raw, str):
+        actual = {raw}
+    elif isinstance(raw, (list, tuple, set)):
+        actual = {str(value) for value in raw}
+    else:
+        actual = set()
+    requested = set(node_names)
+    if operator == "AND":
+        return requested <= actual
+    return bool(requested & actual)

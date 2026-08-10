@@ -146,6 +146,8 @@ class HybridChunksRetriever(ChunksRetriever):
         lexical_retriever = BM25ChunksRetriever(
             top_k=self.candidate_pool_size,
             with_scores=True,
+            node_name=self.node_name,
+            node_name_filter_operator=self.node_name_filter_operator,
         )
         vector_result, lexical_result = await asyncio.gather(
             vector_search,

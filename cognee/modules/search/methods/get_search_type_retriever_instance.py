@@ -312,7 +312,14 @@ async def get_search_type_retriever_instance(
                 "include_references": include_references,
             },
         ),
-        SearchType.CHUNKS_LEXICAL: (BM25ChunksRetriever, {"top_k": top_k}),
+        SearchType.CHUNKS_LEXICAL: (
+            BM25ChunksRetriever,
+            {
+                "top_k": top_k,
+                "node_name": node_name,
+                "node_name_filter_operator": node_name_filter_operator,
+            },
+        ),
         SearchType.CHUNKS_HYBRID: (
             HybridChunksRetriever,
             {

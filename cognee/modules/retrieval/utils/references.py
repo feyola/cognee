@@ -22,7 +22,7 @@ import re
 from typing import Any, List, Optional, Set, Tuple
 
 from cognee.shared.logging_utils import get_logger
-from cognee.modules.retrieval.utils.chunk_metadata import parse_json_front_matter
+from cognee.modules.retrieval.utils.chunk_metadata import split_json_front_matter
 
 logger = get_logger("references")
 
@@ -31,7 +31,7 @@ logger = get_logger("references")
 EVIDENCE_HEADER = "Evidence:"
 
 # Maximum length of a rendered text snippet (characters) before truncation.
-_SNIPPET_MAX_CHARS = 160
+_SNIPPET_MAX_CHARS = 320
 
 # Hard upper bound on bullets regardless of the requested limit (3-5 range).
 _MAX_BULLETS = 5
@@ -42,6 +42,18 @@ _CHUNK_COLLECTION = "DocumentChunk_text"
 
 # How many vector candidates to fetch before answer-overlap filtering.
 _CANDIDATE_POOL = 10
+
+
+def _answer_body(text: str) -> str:
+    """Remove machine metadata so overlap and snippets represent supporting prose."""
+    _metadata, body = split_json_front_matter(text)
+    lines = body.splitlines()
+    while lines and (
+        not lines[0].strip()
+        or lines[0].lstrip().startswith("> extraction-solutions provenance:")
+    ):
+        lines.pop(0)
+    return "\n".join(lines).strip()
 
 # Common English words excluded from answer/chunk term overlap scoring.
 _STOPWORDS = frozenset(
@@ -134,14 +146,18 @@ def _get_payload(obj: Any) -> Optional[dict]:
     return None
 
 
-def _provenance_suffix(data_id: Optional[str], chunk_id: Optional[str]) -> str:
-    """Render a '(data_id: …, chunk_id: …)' annotation for whichever ids exist.
+def _provenance_suffix(
+    source_id: Optional[str], data_id: Optional[str], chunk_id: Optional[str]
+) -> str:
+    """Render source, ingested-data, and internal-chunk identities when available.
 
     Lets a reader map the citation back to the ingested data item and the exact
     cited chunk, instead of only a (possibly auto-generated) document name and a
     positional chunk number.
     """
     parts = []
+    if source_id:
+        parts.append(f"source_id: {source_id}")
     if data_id:
         parts.append(f"data_id: {data_id}")
     if chunk_id:
@@ -217,8 +233,20 @@ def format_chunk_references(
             # rather than presenting unverifiable retrieval order as provenance.
             return ""
 
-    # (overlap, document name, canonical URL, number, text, data id, chunk id).
-    candidates: List[Tuple[int, str, Optional[str], int, str, Optional[str], Optional[str]]] = []
+    # (overlap, name, URL, source index, fallback number, body, source/data/chunk ids).
+    candidates: List[
+        Tuple[
+            int,
+            str,
+            Optional[str],
+            Optional[int],
+            int,
+            str,
+            Optional[str],
+            Optional[str],
+            Optional[str],
+        ]
+    ] = []
     seen: set = set()
 
     for obj in iterator:
@@ -226,28 +254,31 @@ def format_chunk_references(
         if payload is None:
             continue
 
-        metadata = parse_json_front_matter(payload.get("text"))
+        text = _clean_str(payload.get("text"))
+        if text is None:
+            continue
+        metadata, _body = split_json_front_matter(text)
+        body = _answer_body(text)
         document_name = _clean_str(metadata.get("title")) or _clean_str(
             payload.get("document_name")
         )
         canonical_url = _clean_str(metadata.get("canonical_url"))
-        number = _chunk_number(payload)
-        if number is None:
-            number = _chunk_number(metadata)
-        text = _clean_str(payload.get("text"))
+        source_index = metadata.get("chunk_index")
+        if isinstance(source_index, bool) or not isinstance(source_index, int) or source_index < 0:
+            source_index = None
+        number = _chunk_number(payload) or _chunk_number(metadata)
 
         # Document name and a chunk number are both required to ground the
         # citation; text is required for a meaningful snippet.
-        if document_name is None or number is None or text is None:
+        if document_name is None or number is None or not body:
             continue
 
         chunk_id = _chunk_id(obj, payload)
         # document_id == the ingested Data item's id (cognify sets
         # Document.id = data.id), i.e. the dataId a caller needs to map a
         # citation back to the document they ingested.
-        data_id = _clean_str(payload.get("document_id")) or _clean_str(
-            metadata.get("document_id")
-        )
+        source_id = _clean_str(metadata.get("document_id"))
+        data_id = _clean_str(payload.get("document_id"))
 
         dedup_key = chunk_id or f"{document_name}#{number}"
         if dedup_key in seen:
@@ -256,14 +287,26 @@ def format_chunk_references(
 
         score = 0
         if answer_terms is not None:
-            chunk_terms = set(re.findall(r"[a-z0-9]+", text.lower()))
+            chunk_terms = set(re.findall(r"[a-z0-9]+", body.lower()))
             score = len(answer_terms & chunk_terms)
             if score == 0:
                 # No term from the answer appears in this chunk: it is almost
                 # certainly not a source of the answer.
                 continue
 
-        candidates.append((score, document_name, canonical_url, number, text, data_id, chunk_id))
+        candidates.append(
+            (
+                score,
+                document_name,
+                canonical_url,
+                source_index,
+                number,
+                body,
+                source_id,
+                data_id,
+                chunk_id,
+            )
+        )
 
     if not candidates:
         return ""
@@ -275,14 +318,28 @@ def format_chunk_references(
     max_bullets = _clamp_limit(limit)
     bullets = [
         (
-            f"- {document_name}: {canonical_url} (chunk {number})"
+            f"- {document_name}: {canonical_url} "
+            + (
+                f"(source chunk {source_index:04d})"
+                if source_index is not None
+                else f"(chunk {number})"
+            )
             if canonical_url
             else f"- chunk {number} of document {document_name}"
         )
-        + f'{_provenance_suffix(data_id, chunk_id)}: "{_snippet(text)}"'
-        for _, document_name, canonical_url, number, text, data_id, chunk_id in candidates[
-            :max_bullets
-        ]
+        + _provenance_suffix(source_id, data_id, chunk_id)
+        + f': "{_snippet(body)}"'
+        for (
+            _,
+            document_name,
+            canonical_url,
+            source_index,
+            number,
+            body,
+            source_id,
+            data_id,
+            chunk_id,
+        ) in candidates[:max_bullets]
     ]
 
     return EVIDENCE_HEADER + "\n" + "\n".join(bullets)
