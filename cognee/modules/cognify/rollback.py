@@ -42,6 +42,27 @@ def _extract_data_ids(data_ingestion_info: Any) -> set[UUID]:
     return data_ids
 
 
+def _extract_input_data_ids(data: Any) -> set[UUID]:
+    """Return ids from the authoritative data items submitted to the failed run.
+
+    A failed graph write can be rolled back before every completed item's
+    provenance is still discoverable.  The pipeline passes its original Data
+    objects to the rollback handler, so include those ids when clearing
+    per-dataset processing status.  Otherwise a retry can skip an item whose
+    graph/vector artifacts were removed by the rollback.
+    """
+    if not isinstance(data, list):
+        return set()
+
+    data_ids: set[UUID] = set()
+    for entry in data:
+        candidate = entry.get("id") if isinstance(entry, dict) else getattr(entry, "id", None)
+        maybe_data_id = _to_uuid(candidate)
+        if maybe_data_id:
+            data_ids.add(maybe_data_id)
+    return data_ids
+
+
 async def _graph_provenance_affected_data_ids(graph_engine, pipeline_run_id: str) -> set[UUID]:
     """Data ids whose ownership the run introduced, read from graph provenance.
 
@@ -88,6 +109,7 @@ async def cognify_rollback_handler(
     pipeline_run_id: UUID,
     dataset: Any,
     user: Any = None,
+    data: Any = None,
     data_ingestion_info: Any = None,
     **kwargs: Any,
 ) -> None:
@@ -120,6 +142,7 @@ async def cognify_rollback_handler(
                 graph_engine, str(pipeline_run_id)
             )
             target_data_ids |= _extract_data_ids(data_ingestion_info)
+            target_data_ids |= _extract_input_data_ids(data)
 
             await unified.rollback_by_pipeline_run_id(str(pipeline_run_id))
 
@@ -169,6 +192,7 @@ async def cognify_rollback_handler(
             {node.data_id for node in target_nodes}
             | {edge.data_id for edge in target_edges}
             | _extract_data_ids(data_ingestion_info)
+            | _extract_input_data_ids(data)
         )
 
         unique_nodes = []

@@ -186,6 +186,58 @@ async def test_graph_provenance_rollback_resets_status_without_ingestion_info(mo
 
 
 @pytest.mark.asyncio
+async def test_graph_provenance_rollback_resets_input_with_no_surviving_artifacts(monkeypatch):
+    """A retry must not skip an input whose failed-run artifacts disappeared."""
+    pipeline_run_id = uuid4()
+    dataset_id = uuid4()
+    data_id = uuid4()
+
+    class _FakeGraph:
+        async def find_node_source_refs_by_pipeline_run(self, _run):
+            return {}
+
+        async def find_edge_source_refs_by_pipeline_run(self, _run):
+            return {}
+
+    fake_unified = SimpleNamespace(
+        supports_graph_provenance_delete=lambda: True,
+        graph=_FakeGraph(),
+        rollback_by_pipeline_run_id=lambda _run: _async_none(),
+    )
+    data_record = SimpleNamespace(
+        id=data_id,
+        pipeline_status={
+            "cognify_pipeline": {str(dataset_id): "DATA_ITEM_PROCESSING_COMPLETED"}
+        },
+    )
+    session_mutation = _FakeSession([_FakeExecuteResult([data_record])])
+    engine = _FakeEngine([session_mutation])
+
+    async def _async_none():
+        return None
+
+    async def _get_unified_engine():
+        return fake_unified
+
+    async def _stores_provenance_in_graph(_graph):
+        return True
+
+    monkeypatch.setattr(rollback_module, "get_unified_engine", _get_unified_engine)
+    monkeypatch.setattr(rollback_module, "stores_provenance_in_graph", _stores_provenance_in_graph)
+    monkeypatch.setattr(rollback_module, "get_relational_engine", lambda: engine)
+    monkeypatch.setattr(rollback_module.orm_attributes, "flag_modified", lambda *_args: None)
+
+    await rollback_module.cognify_rollback_handler(
+        pipeline_run_id=pipeline_run_id,
+        dataset=SimpleNamespace(id=dataset_id),
+        data=[SimpleNamespace(id=data_id)],
+    )
+
+    assert str(dataset_id) not in data_record.pipeline_status["cognify_pipeline"]
+    assert session_mutation.committed is True
+
+
+@pytest.mark.asyncio
 async def test_cognify_rollback_keeps_relational_rows_if_graph_delete_fails(monkeypatch):
     pipeline_run_id = uuid4()
     dataset_id = uuid4()
