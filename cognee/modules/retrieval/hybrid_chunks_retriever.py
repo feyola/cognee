@@ -245,7 +245,9 @@ def _bound_results(
         if remaining <= 0:
             break
         if len(text) > remaining:
-            text = text[:remaining]
+            text = _truncate_preserving_front_matter(text, remaining)
+            if text is None:
+                break
             payload["text"] = text
         used += separator + len(text)
         bounded.append(
@@ -256,6 +258,22 @@ def _bound_results(
             )
         )
     return bounded
+
+
+def _truncate_preserving_front_matter(text: str, limit: int) -> str | None:
+    """Bound text without emitting a partial metadata envelope."""
+    normalized = text.lstrip("\ufeff\r\n").replace("\r\n", "\n")
+    if len(normalized) <= limit:
+        return normalized
+    if not normalized.startswith("---\n"):
+        return normalized[:limit]
+    closing = normalized.find("\n---\n", 4)
+    if closing < 0:
+        return None
+    body_start = closing + len("\n---\n")
+    if body_start >= limit:
+        return None
+    return normalized[:body_start] + normalized[body_start:limit]
 
 
 def _result_uuid(identity: str) -> UUID:

@@ -21,6 +21,7 @@ when there is nothing usable, and never raise on backend failures.
 import re
 from typing import Any, List, Optional, Set, Tuple
 
+from cognee.context_global_variables import current_dataset_id
 from cognee.shared.logging_utils import get_logger
 from cognee.modules.retrieval.utils.chunk_metadata import split_json_front_matter
 
@@ -165,7 +166,11 @@ def _get_payload(obj: Any) -> Optional[dict]:
 
 
 def _provenance_suffix(
-    source_id: Optional[str], data_id: Optional[str], chunk_id: Optional[str]
+    source_id: Optional[str],
+    data_id: Optional[str],
+    chunk_id: Optional[str],
+    dataset_id: Optional[str],
+    node_sets: tuple[str, ...],
 ) -> str:
     """Render source, ingested-data, and internal-chunk identities when available.
 
@@ -180,7 +185,29 @@ def _provenance_suffix(
         parts.append(f"data_id: {data_id}")
     if chunk_id:
         parts.append(f"chunk_id: {chunk_id}")
+    if dataset_id:
+        parts.append(f"dataset_id: {dataset_id}")
+    if node_sets:
+        parts.append(f"node_sets: {'|'.join(node_sets)}")
     return f" ({', '.join(parts)})" if parts else ""
+
+
+def _dataset_provenance(payload: dict) -> tuple[Optional[str], tuple[str, ...]]:
+    """Resolve the request dataset and exact node-set memberships for a chunk."""
+    dataset_id = _clean_str(payload.get("dataset_id"))
+    if dataset_id is None:
+        active_dataset_id = current_dataset_id.get()
+        if active_dataset_id is not None:
+            dataset_id = str(active_dataset_id)
+
+    raw_node_sets = payload.get("belongs_to_set")
+    if isinstance(raw_node_sets, str):
+        node_sets = (raw_node_sets.strip(),) if raw_node_sets.strip() else ()
+    elif isinstance(raw_node_sets, (list, tuple, set)):
+        node_sets = tuple(sorted({str(value).strip() for value in raw_node_sets if str(value).strip()}))
+    else:
+        node_sets = ()
+    return dataset_id, node_sets
 
 
 def _chunk_id(obj: Any, payload: dict) -> Optional[str]:
@@ -251,7 +278,7 @@ def format_chunk_references(
             # rather than presenting unverifiable retrieval order as provenance.
             return ""
 
-    # (overlap, name, URL, source index, fallback number, body, source/data/chunk ids).
+    # (overlap, name, URL, source index, fallback number, body, provenance ids).
     candidates: List[
         Tuple[
             int,
@@ -263,6 +290,8 @@ def format_chunk_references(
             Optional[str],
             Optional[str],
             Optional[str],
+            Optional[str],
+            tuple[str, ...],
         ]
     ] = []
     seen: set = set()
@@ -297,6 +326,7 @@ def format_chunk_references(
         # citation back to the document they ingested.
         source_id = _clean_str(metadata.get("document_id"))
         data_id = _clean_str(payload.get("document_id"))
+        dataset_id, node_sets = _dataset_provenance(payload)
 
         dedup_key = chunk_id or f"{document_name}#{number}"
         if dedup_key in seen:
@@ -323,6 +353,8 @@ def format_chunk_references(
                 source_id,
                 data_id,
                 chunk_id,
+                dataset_id,
+                node_sets,
             )
         )
 
@@ -345,7 +377,7 @@ def format_chunk_references(
             if canonical_url
             else f"- chunk {number} of document {document_name}"
         )
-        + _provenance_suffix(source_id, data_id, chunk_id)
+        + _provenance_suffix(source_id, data_id, chunk_id, dataset_id, node_sets)
         + f': "{_snippet(body, answer_terms)}"'
         for (
             _,
@@ -357,6 +389,8 @@ def format_chunk_references(
             source_id,
             data_id,
             chunk_id,
+            dataset_id,
+            node_sets,
         ) in candidates[:max_bullets]
     ]
 

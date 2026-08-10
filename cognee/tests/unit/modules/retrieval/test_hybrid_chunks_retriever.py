@@ -155,7 +155,22 @@ def test_context_is_bounded_without_losing_chunk_identity_or_provenance_header()
     assert len(results) == 1
     assert len(results[0].payload["text"]) <= 1_200
     assert results[0].payload["text"].startswith("---\n")
+    assert parse_json_front_matter(results[0].payload["text"])["title"] == "Trading"
     assert results[0].id == first.id
+
+
+def test_context_bound_omits_chunk_when_complete_front_matter_cannot_fit():
+    first = _result(_text("Trading", body="A" * 2_000))
+
+    results = fuse_chunk_results(
+        "trading",
+        [first],
+        [],
+        top_k=1,
+        max_context_chars=20,
+    )
+
+    assert results == []
 
 
 def test_canonical_front_matter_is_preserved_in_evidence():

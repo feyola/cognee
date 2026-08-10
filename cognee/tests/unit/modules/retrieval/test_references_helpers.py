@@ -6,9 +6,11 @@ including the old-data graceful-degradation cases and backend-failure cases.
 """
 
 from unittest.mock import AsyncMock
+from uuid import UUID
 
 import pytest
 
+from cognee.context_global_variables import current_dataset_id
 from cognee.modules.retrieval.utils.references import (
     EVIDENCE_HEADER,
     build_answer_grounded_chunk_references,
@@ -193,6 +195,34 @@ def test_front_matter_is_removed_from_overlap_and_supporting_snippet():
     assert "chunk_id: chunk-123" in result
     assert '"# Trading Sales tax is 7.5% and Accounting reduces it to 3.37%."' in result
     assert '"--- document_id:' not in result
+
+
+def test_reference_includes_request_dataset_and_exact_node_sets():
+    dataset_id = UUID("4b4d2964-0333-5057-bb0e-723d35f90810")
+    text = (
+        '---\ndocument_id: "mediawiki:131:9001:chunk:0006"\n'
+        'title: "Trading"\n'
+        'canonical_url: "https://wiki.eveuniversity.org/Trading"\n'
+        "chunk_index: 6\n---\n\n"
+        "Sales tax is 7.5 percent."
+    )
+    token = current_dataset_id.set(dataset_id)
+    try:
+        result = format_chunk_references(
+            [
+                _payload(
+                    text=text,
+                    document_id="data-123",
+                    id="chunk-123",
+                    belongs_to_set=["view:current", "site:candidate", "source:wiki"],
+                )
+            ]
+        )
+    finally:
+        current_dataset_id.reset(token)
+
+    assert f"dataset_id: {dataset_id}" in result
+    assert "node_sets: site:candidate|source:wiki|view:current" in result
 
 
 def test_supporting_snippet_focuses_on_late_answer_terms():
