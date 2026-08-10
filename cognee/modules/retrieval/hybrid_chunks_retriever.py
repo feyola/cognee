@@ -208,11 +208,11 @@ def _hybrid_relevance(query: str, candidate: _Candidate) -> float:
     if isinstance(section_path, list):
         section_tokens = set(normalize_search_text(" ".join(map(str, section_path))).split())
         relevance += min(3, len(query_tokens & section_tokens)) * 0.015
-    answer_tokens = {
-        token for token in normalize_search_text(answer_body).split() if len(token) >= 4
-    }
-    meaningful_query_tokens = {token for token in query_tokens if len(token) >= 4}
-    relevance += min(5, len(meaningful_query_tokens & answer_tokens)) * 0.02
+    answer_tokens = set(normalize_search_text(answer_body).split())
+    # A tiny long-term overlap tie-breaker helps choose an answer-bearing chunk
+    # within an already-ranked page without overriding title/section/status policy.
+    specific_query_tokens = {token for token in query_tokens if len(token) >= 7}
+    relevance += min(3, len(specific_query_tokens & answer_tokens)) * 0.003
     if _status_stub(candidate.payload):
         relevance -= 0.04
     return relevance

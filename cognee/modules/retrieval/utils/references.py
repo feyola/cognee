@@ -95,12 +95,30 @@ def _clean_str(value: Any) -> Optional[str]:
     return stripped or None
 
 
-def _snippet(text: str) -> str:
-    """Collapse whitespace and truncate text into a short snippet."""
+def _snippet(text: str, focus_terms: Optional[Set[str]] = None) -> str:
+    """Return a compact supporting excerpt, focused on answer terms when supplied."""
     collapsed = " ".join(text.split())
     if len(collapsed) <= _SNIPPET_MAX_CHARS:
         return collapsed
-    return collapsed[: _SNIPPET_MAX_CHARS - 1].rstrip() + "…"
+    start = 0
+    if focus_terms:
+        candidates = {0}
+        for match in re.finditer(r"[a-z0-9]+", collapsed.lower()):
+            if match.group() in focus_terms:
+                candidates.add(max(0, match.start() - 80))
+
+        def score(offset: int) -> tuple[int, int]:
+            excerpt = collapsed[offset : offset + _SNIPPET_MAX_CHARS]
+            terms = set(re.findall(r"[a-z0-9]+", excerpt.lower()))
+            return len(focus_terms & terms), -offset
+
+        start = max(candidates, key=score)
+    excerpt = collapsed[start : start + _SNIPPET_MAX_CHARS]
+    if start:
+        excerpt = "…" + excerpt[1:]
+    if start + _SNIPPET_MAX_CHARS < len(collapsed):
+        excerpt = excerpt[:-1].rstrip() + "…"
+    return excerpt
 
 
 def _chunk_number(payload: dict) -> Optional[int]:
@@ -328,7 +346,7 @@ def format_chunk_references(
             else f"- chunk {number} of document {document_name}"
         )
         + _provenance_suffix(source_id, data_id, chunk_id)
-        + f': "{_snippet(body)}"'
+        + f': "{_snippet(body, answer_terms)}"'
         for (
             _,
             document_name,

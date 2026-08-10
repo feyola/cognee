@@ -195,6 +195,25 @@ def test_front_matter_is_removed_from_overlap_and_supporting_snippet():
     assert '"--- document_id:' not in result
 
 
+def test_supporting_snippet_focuses_on_late_answer_terms():
+    text = (
+        '---\ndocument_id: "mediawiki:1:2:chunk:0005"\n'
+        'title: "Insurgency"\n'
+        'canonical_url: "https://wiki.eveuniversity.org/Insurgency"\n'
+        "chunk_index: 5\n---\n\n"
+        + "Background mechanics. " * 80
+        + "Winning pilots receive ISK and loyalty points at the conclusion."
+    )
+
+    result = format_chunk_references(
+        [_payload(text=text, document_id="data-1", id="chunk-1")],
+        answer="Pilots receive loyalty points.",
+    )
+
+    assert "loyalty points" in result
+    assert '"--- document_id:' not in result
+
+
 # ---------------------------------------------------------------------------
 # format_chunk_references (answer-grounded filtering and ranking)
 # ---------------------------------------------------------------------------
