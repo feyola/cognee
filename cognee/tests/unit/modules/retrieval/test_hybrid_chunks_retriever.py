@@ -62,6 +62,35 @@ def test_rrf_and_alias_boost_promote_canonical_page():
     assert parse_json_front_matter(results[0].payload["text"])["title"] == "Planetary Industry"
 
 
+def test_answer_body_overlap_selects_the_supporting_chunk_within_a_page():
+    url = "https://wiki.eveuniversity.org/Insurgency"
+    overview = _result(
+        _text(
+            "Insurgency",
+            url=url,
+            aliases=["Faction warfare"],
+            body="Systems become corrupted or suppressed during an insurgency.",
+        )
+    )
+    rewards = _result(
+        _text(
+            "Insurgency",
+            url=url,
+            aliases=["Faction warfare"],
+            body="Winning pilots receive ISK and loyalty points.",
+        )
+    )
+
+    [result] = fuse_chunk_results(
+        "faction warfare loyalty point demand",
+        [overview, rewards],
+        [],
+        top_k=1,
+    )
+
+    assert "loyalty points" in result.payload["text"]
+
+
 def test_primary_slots_are_canonical_page_diverse_then_retain_extra_chunks():
     trading_url = "https://wiki.eveuniversity.org/Trading"
     chunks = [

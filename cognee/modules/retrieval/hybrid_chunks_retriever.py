@@ -17,6 +17,7 @@ from cognee.modules.retrieval.utils.chunk_metadata import (
     canonical_page_key,
     normalize_search_text,
     parse_json_front_matter,
+    split_json_front_matter,
 )
 from cognee.shared.logging_utils import get_logger
 
@@ -192,7 +193,7 @@ def _hybrid_relevance(query: str, candidate: _Candidate) -> float:
     if candidate.lexical_rank is not None:
         relevance += 1 / (RRF_CONSTANT + candidate.lexical_rank)
 
-    metadata = parse_json_front_matter(candidate.payload.get("text"))
+    metadata, answer_body = split_json_front_matter(candidate.payload.get("text"))
     query_normalized = normalize_search_text(query)
     query_tokens = set(query_normalized.split())
     aliases = metadata.get("aliases")
@@ -207,6 +208,11 @@ def _hybrid_relevance(query: str, candidate: _Candidate) -> float:
     if isinstance(section_path, list):
         section_tokens = set(normalize_search_text(" ".join(map(str, section_path))).split())
         relevance += min(3, len(query_tokens & section_tokens)) * 0.015
+    answer_tokens = {
+        token for token in normalize_search_text(answer_body).split() if len(token) >= 4
+    }
+    meaningful_query_tokens = {token for token in query_tokens if len(token) >= 4}
+    relevance += min(5, len(meaningful_query_tokens & answer_tokens)) * 0.02
     if _status_stub(candidate.payload):
         relevance -= 0.04
     return relevance
