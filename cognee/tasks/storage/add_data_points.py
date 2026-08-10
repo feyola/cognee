@@ -205,13 +205,21 @@ async def add_data_points(
     if use_hybrid:
         await graph_engine.add_edges_with_vectors(edges)
     elif graph_only:
-        await graph_engine.add_edges(
-            edges, source_ref_key=fold_source_ref_key, pipeline_run_id=fold_run_arg
+        await _add_edges_with_endpoint_repair(
+            graph_engine,
+            nodes,
+            edges,
+            source_ref_key=fold_source_ref_key,
+            pipeline_run_id=fold_run_arg,
         )
     else:
         await asyncio.gather(
-            graph_engine.add_edges(
-                edges, source_ref_key=fold_source_ref_key, pipeline_run_id=fold_run_arg
+            _add_edges_with_endpoint_repair(
+                graph_engine,
+                nodes,
+                edges,
+                source_ref_key=fold_source_ref_key,
+                pipeline_run_id=fold_run_arg,
             ),
             index_graph_edges(edges, vector_engine=vector_engine),
         )
@@ -223,14 +231,18 @@ async def add_data_points(
         if use_hybrid:
             await graph_engine.add_edges_with_vectors(custom_edges)
         elif graph_only:
-            await graph_engine.add_edges(
+            await _add_edges_with_endpoint_repair(
+                graph_engine,
+                nodes,
                 custom_edges,
                 source_ref_key=fold_source_ref_key,
                 pipeline_run_id=fold_run_arg,
             )
         else:
             await asyncio.gather(
-                graph_engine.add_edges(
+                _add_edges_with_endpoint_repair(
+                    graph_engine,
+                    nodes,
                     custom_edges,
                     source_ref_key=fold_source_ref_key,
                     pipeline_run_id=fold_run_arg,
@@ -263,6 +275,64 @@ async def add_data_points(
             logger.info(f"Created and indexed {len(triplets)} triplets from graph structure")
 
     return data_points
+
+
+async def _add_edges_with_endpoint_repair(
+    graph_engine,
+    nodes: List[DataPoint],
+    edges: List[tuple],
+    *,
+    source_ref_key: Optional[str],
+    pipeline_run_id: Optional[str],
+) -> None:
+    """Retry one concurrent endpoint-loss race without accepting malformed edges."""
+    try:
+        await graph_engine.add_edges(
+            edges,
+            source_ref_key=source_ref_key,
+            pipeline_run_id=pipeline_run_id,
+        )
+    except Exception as error:
+        node_ids = {str(node.id) for node in nodes if getattr(node, "id", None) is not None}
+        endpoint_ids = {str(edge[index]) for edge in edges for index in (0, 1)}
+        if not _is_foreign_key_violation(error) or not endpoint_ids <= node_ids:
+            raise
+        logger.warning(
+            "Graph edge endpoints disappeared during a concurrent write; "
+            "re-upserting the exact node batch and retrying once."
+        )
+        await graph_engine.add_nodes(
+            nodes,
+            source_ref_key=source_ref_key,
+            pipeline_run_id=pipeline_run_id,
+        )
+        await graph_engine.add_edges(
+            edges,
+            source_ref_key=source_ref_key,
+            pipeline_run_id=pipeline_run_id,
+        )
+
+
+def _is_foreign_key_violation(error: BaseException) -> bool:
+    pending: list[BaseException] = [error]
+    seen: set[int] = set()
+    while pending:
+        current = pending.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        if getattr(current, "sqlstate", None) == "23503" or getattr(
+            current, "pgcode", None
+        ) == "23503":
+            return True
+        for related in (
+            getattr(current, "orig", None),
+            current.__cause__,
+            current.__context__,
+        ):
+            if isinstance(related, BaseException):
+                pending.append(related)
+    return False
 
 
 def _extract_embeddable_text_from_datapoint(data_point: DataPoint) -> str:
