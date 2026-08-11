@@ -19,6 +19,7 @@ when there is nothing usable, and never raise on backend failures.
 """
 
 import re
+from collections import Counter
 from typing import Any, List, Optional, Set, Tuple
 
 from cognee.context_global_variables import current_dataset_id
@@ -32,7 +33,7 @@ logger = get_logger("references")
 EVIDENCE_HEADER = "Evidence:"
 
 # Maximum length of a rendered text snippet (characters) before truncation.
-_SNIPPET_MAX_CHARS = 320
+_SNIPPET_MAX_CHARS = 640
 
 # Hard upper bound on bullets regardless of the requested limit (3-5 range).
 _MAX_BULLETS = 5
@@ -67,8 +68,26 @@ _STOPWORDS = frozenset(
     their theirs them then there these they this those through to too under
     until up very was we were what when where which while who whom why will
     with you your yours
+    nodes edges source target relationship description notes id type name
     """.split()
 )
+
+
+def _significant_term_weights(text: str) -> dict[str, float]:
+    """Weight claim terms so entity evidence beats response-format boilerplate."""
+    tokens = [
+        token
+        for token in re.findall(r"[a-z0-9]+", text.lower())
+        if len(token) >= 3 and token not in _STOPWORDS
+    ]
+    counts = Counter(tokens)
+    return {
+        token: 1.0
+        + min(count, 5)
+        + min(len(token), 12) / 12
+        + (2.0 if any(character.isdigit() for character in token) else 0.0)
+        for token, count in counts.items()
+    }
 
 
 def _clamp_limit(limit: int) -> int:
@@ -96,7 +115,11 @@ def _clean_str(value: Any) -> Optional[str]:
     return stripped or None
 
 
-def _snippet(text: str, focus_terms: Optional[Set[str]] = None) -> str:
+def _snippet(
+    text: str,
+    focus_terms: Optional[Set[str]] = None,
+    focus_weights: Optional[dict[str, float]] = None,
+) -> str:
     """Return a compact supporting excerpt, focused on answer terms when supplied."""
     collapsed = " ".join(text.split())
     if len(collapsed) <= _SNIPPET_MAX_CHARS:
@@ -108,10 +131,12 @@ def _snippet(text: str, focus_terms: Optional[Set[str]] = None) -> str:
             if match.group() in focus_terms:
                 candidates.add(max(0, match.start() - 80))
 
-        def score(offset: int) -> tuple[int, int]:
+        def score(offset: int) -> tuple[float, int, int]:
             excerpt = collapsed[offset : offset + _SNIPPET_MAX_CHARS]
             terms = set(re.findall(r"[a-z0-9]+", excerpt.lower()))
-            return len(focus_terms & terms), -offset
+            covered = focus_terms & terms
+            weighted = sum((focus_weights or {}).get(term, 1.0) for term in covered)
+            return weighted, len(covered), -offset
 
         start = max(candidates, key=score)
     excerpt = collapsed[start : start + _SNIPPET_MAX_CHARS]
@@ -271,8 +296,10 @@ def format_chunk_references(
         return ""
 
     answer_terms: Optional[Set[str]] = None
+    answer_term_weights: Optional[dict[str, float]] = None
     if answer is not None:
-        answer_terms = _significant_terms(answer)
+        answer_term_weights = _significant_term_weights(answer)
+        answer_terms = set(answer_term_weights)
         if not answer_terms:
             # Nothing to ground the citation in (e.g. "Yes."): omit Evidence
             # rather than presenting unverifiable retrieval order as provenance.
@@ -378,7 +405,7 @@ def format_chunk_references(
             else f"- chunk {number} of document {document_name}"
         )
         + _provenance_suffix(source_id, data_id, chunk_id, dataset_id, node_sets)
-        + f': "{_snippet(body, answer_terms)}"'
+        + f': "{_snippet(body, answer_terms, answer_term_weights)}"'
         for (
             _,
             document_name,

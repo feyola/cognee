@@ -140,7 +140,7 @@ def test_format_chunk_references_caps_and_clamps_limit():
 
 def test_format_chunk_references_snippet_truncated():
     """Long text is truncated with an ellipsis."""
-    long_text = "word " * 100
+    long_text = "word " * 200
     result = format_chunk_references([_payload(text=long_text)])
     # The bullet line contains a truncation ellipsis.
     assert "…" in result
@@ -242,6 +242,35 @@ def test_supporting_snippet_focuses_on_late_answer_terms():
 
     assert "loyalty points" in result
     assert '"--- document_id:' not in result
+
+
+def test_structured_answer_snippet_centers_claim_entities_not_json_fields():
+    text = (
+        '---\ndocument_id: "mediawiki:6281:231494:chunk:0002"\n'
+        'title: "Jump drives"\n'
+        'canonical_url: "https://wiki.eveuniversity.org/Jump_drives"\n'
+        "chunk_index: 2\n---\n\n"
+        + "Jump drives require fuel and have operational constraints. " * 30
+        + "Gallente ships use Oxygen Isotopes for their jump drives."
+    )
+    structured_answer = """{
+      "nodes": [
+        {"id": "Sin", "type": "Ship", "name": "Sin"},
+        {"id": "Oxygen Isotopes", "type": "Material", "name": "Oxygen Isotopes"}
+      ],
+      "edges": [
+        {"source": "Sin", "target": "Oxygen Isotopes", "relationship": "uses_fuel",
+         "description": "The Sin uses Oxygen Isotopes as jump-drive fuel."}
+      ]
+    }"""
+
+    result = format_chunk_references(
+        [_payload(text=text, document_id="data-1", id="chunk-1")],
+        answer=structured_answer,
+    )
+
+    assert "Gallente ships use Oxygen Isotopes" in result
+    assert '"nodes"' not in result
 
 
 # ---------------------------------------------------------------------------
