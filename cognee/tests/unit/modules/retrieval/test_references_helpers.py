@@ -361,6 +361,31 @@ async def test_answer_grounded_references_query_chunk_index_with_answer():
 
 
 @pytest.mark.asyncio
+async def test_answer_grounded_references_compact_oversized_structured_answer():
+    engine = AsyncMock()
+    engine.search.return_value = [
+        _scored(
+            _payload(text="Gallente jump drives use Oxygen Isotopes."),
+            "chunk-1",
+        )
+    ]
+    answer = (
+        '{"nodes":[{"name":"Sin"}],"edges":['
+        '{"description":"'
+        + "Background mechanics. " * 600
+        + '"},{"description":"The Sin uses Oxygen Isotopes."}]}'
+    )
+
+    result = await build_answer_grounded_chunk_references(answer, engine)
+
+    query = engine.search.await_args.args[1]
+    assert len(query) <= 8_001
+    assert "Oxygen Isotopes" in query
+    assert '"nodes"' not in query
+    assert "Oxygen Isotopes" in result
+
+
+@pytest.mark.asyncio
 async def test_answer_grounded_references_drop_unrelated_results():
     """Vector hits that share no terms with the answer are filtered out."""
     engine = AsyncMock()

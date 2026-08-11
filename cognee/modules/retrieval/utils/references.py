@@ -18,6 +18,7 @@ unit tested in isolation. All return ``""`` (or the completions unchanged)
 when there is nothing usable, and never raise on backend failures.
 """
 
+import json
 import re
 from collections import Counter
 from typing import Any, List, Optional, Set, Tuple
@@ -44,6 +45,7 @@ _CHUNK_COLLECTION = "DocumentChunk_text"
 
 # How many vector candidates to fetch before answer-overlap filtering.
 _CANDIDATE_POOL = 10
+_EMBEDDING_QUERY_MAX_CHARS = 8_000
 
 
 def _answer_body(text: str) -> str:
@@ -88,6 +90,38 @@ def _significant_term_weights(text: str) -> dict[str, float]:
         + (2.0 if any(character.isdigit() for character in token) else 0.0)
         for token, count in counts.items()
     }
+
+
+def _embedding_query(answer: str) -> str:
+    """Bound reference-search input while retaining structured answer claims."""
+    if len(answer) <= _EMBEDDING_QUERY_MAX_CHARS:
+        return answer
+    compact: list[str] = []
+    try:
+        parsed = json.loads(answer)
+    except (TypeError, ValueError):
+        parsed = None
+
+    def collect(value: Any, *, include_string: bool = False) -> None:
+        if isinstance(value, dict):
+            for key, nested in value.items():
+                collect(nested, include_string=key in {"name", "description", "notes"})
+        elif isinstance(value, list):
+            for nested in value:
+                collect(nested, include_string=include_string)
+        elif include_string and isinstance(value, str) and value.strip():
+            compact.append(value.strip())
+
+    collect(parsed)
+    if compact:
+        unique = list(dict.fromkeys(compact))
+        query = "\n".join(unique)
+        if len(query) <= _EMBEDDING_QUERY_MAX_CHARS:
+            return query
+        answer = query
+
+    half = _EMBEDDING_QUERY_MAX_CHARS // 2
+    return answer[:half] + "\n" + answer[-half:]
 
 
 def _clamp_limit(limit: int) -> int:
@@ -458,7 +492,7 @@ async def build_answer_grounded_chunk_references(
     try:
         found_chunks = await vector_engine.search(
             _CHUNK_COLLECTION,
-            cleaned_answer,
+            _embedding_query(cleaned_answer),
             limit=_CANDIDATE_POOL,
             include_payload=True,
         )
