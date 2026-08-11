@@ -140,7 +140,7 @@ def test_format_chunk_references_caps_and_clamps_limit():
 
 def test_format_chunk_references_snippet_truncated():
     """Long text is truncated with an ellipsis."""
-    long_text = "word " * 200
+    long_text = "word " * 300
     result = format_chunk_references([_payload(text=long_text)])
     # The bullet line contains a truncation ellipsis.
     assert "…" in result
