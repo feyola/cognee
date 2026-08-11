@@ -12,6 +12,7 @@ def _text(
     *,
     url: str | None = None,
     aliases: list[str] | None = None,
+    alias_relations: dict[str, list[str]] | None = None,
     section: list[str] | None = None,
     active: bool = True,
     kind: str = "prose",
@@ -21,6 +22,7 @@ def _text(
         "title": title,
         "canonical_url": url or f"https://wiki.eveuniversity.org/{title.replace(' ', '_')}",
         "aliases": aliases or [],
+        "alias_relations": alias_relations or {},
         "section_path": section or ["Overview"],
         "active": active,
         "chunk_kind": kind,
@@ -195,11 +197,13 @@ def test_secondary_chunk_prefers_more_uncovered_query_aspects():
 def test_secondary_chunk_uses_related_alias_to_ground_answer_chain():
     url = "https://wiki.eveuniversity.org/Jump_drives"
     aliases = ["Sin fuel", "Oxygen Isotopes"]
+    relations = {"Sin fuel": ["Oxygen Isotopes"]}
     formula = _result(
         _text(
             "Jump drives",
             url=url,
             aliases=aliases,
+            alias_relations=relations,
             body="The isotope fuel-used formula depends on distance.",
         )
     )
@@ -208,6 +212,7 @@ def test_secondary_chunk_uses_related_alias_to_ground_answer_chain():
             "Jump drives",
             url=url,
             aliases=aliases,
+            alias_relations=relations,
             body="A general overview of jump-capable ships.",
         )
     )
@@ -216,6 +221,7 @@ def test_secondary_chunk_uses_related_alias_to_ground_answer_chain():
             "Jump drives",
             url=url,
             aliases=aliases,
+            alias_relations=relations,
             body="The Isotope type table maps Gallente ships to Oxygen.",
         )
     )
@@ -236,6 +242,38 @@ def test_secondary_chunk_uses_related_alias_to_ground_answer_chain():
     bodies = [result.payload["text"] for result in results]
     assert any("maps Gallente ships to Oxygen" in body for body in bodies)
     assert all("general overview" not in body for body in bodies)
+
+
+def test_secondary_chunk_does_not_treat_unrelated_flat_alias_as_evidence():
+    url = "https://wiki.eveuniversity.org/Jump_drives"
+    distractor = _result(
+        _text(
+            "Jump drives",
+            url=url,
+            aliases=["Sin fuel", "Cynosural Field"],
+            body="A Cynosural Field permits capital travel.",
+        )
+    )
+    answer = _result(
+        _text(
+            "Jump drives",
+            url=url,
+            aliases=["Sin fuel", "Oxygen Isotopes"],
+            alias_relations={"Sin fuel": ["Oxygen Isotopes"]},
+            body="Gallente ships use Oxygen Isotopes.",
+        )
+    )
+
+    results = fuse_chunk_results(
+        "What kind of fuel is used by Sin?",
+        [distractor, answer],
+        [(distractor.payload, 10.0), (answer.payload, 9.0)],
+        top_k=2,
+        page_limit=1,
+        max_chunks_per_page=2,
+    )
+
+    assert "Oxygen Isotopes" in results[1].payload["text"]
 
 
 def test_historical_body_is_excluded_but_status_warning_remains_discoverable():
