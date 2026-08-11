@@ -9,6 +9,11 @@ from cognee.modules.retrieval.exceptions.exceptions import NoDataError
 from cognee.infrastructure.databases.vector.exceptions import CollectionNotFoundError
 
 
+def test_currentness_guidance_preserves_precise_numeric_evidence():
+    assert "most precise numeric value" in CURRENTNESS_GUIDANCE
+    assert "do not round" in CURRENTNESS_GUIDANCE
+
+
 @pytest.fixture
 def mock_vector_engine():
     """Create a mock vector engine."""

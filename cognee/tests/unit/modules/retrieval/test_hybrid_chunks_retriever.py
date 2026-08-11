@@ -192,6 +192,52 @@ def test_secondary_chunk_prefers_more_uncovered_query_aspects():
     assert all("Skills reduce trading overhead" not in body for body in bodies)
 
 
+def test_secondary_chunk_uses_related_alias_to_ground_answer_chain():
+    url = "https://wiki.eveuniversity.org/Jump_drives"
+    aliases = ["Sin fuel", "Oxygen Isotopes"]
+    formula = _result(
+        _text(
+            "Jump drives",
+            url=url,
+            aliases=aliases,
+            body="The isotope fuel-used formula depends on distance.",
+        )
+    )
+    overview = _result(
+        _text(
+            "Jump drives",
+            url=url,
+            aliases=aliases,
+            body="A general overview of jump-capable ships.",
+        )
+    )
+    isotope_table = _result(
+        _text(
+            "Jump drives",
+            url=url,
+            aliases=aliases,
+            body="The Isotope type table maps Gallente ships to Oxygen.",
+        )
+    )
+
+    results = fuse_chunk_results(
+        "What kind of fuel is used by Sin?",
+        [formula, overview, isotope_table],
+        [
+            (formula.payload, 10.0),
+            (overview.payload, 9.0),
+            (isotope_table.payload, 8.0),
+        ],
+        top_k=2,
+        page_limit=1,
+        max_chunks_per_page=2,
+    )
+
+    bodies = [result.payload["text"] for result in results]
+    assert any("maps Gallente ships to Oxygen" in body for body in bodies)
+    assert all("general overview" not in body for body in bodies)
+
+
 def test_historical_body_is_excluded_but_status_warning_remains_discoverable():
     status = _result(_text("Reprocessing", active=False, kind="status"))
     historical = _result(

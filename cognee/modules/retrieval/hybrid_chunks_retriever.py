@@ -127,7 +127,12 @@ def fuse_chunk_results(
                     & query_tokens
                     - page_query_coverage.get(page, set())
                 )
-                return relevance + min(3, len(novel)) * 0.012, relevance, candidate.identity
+                answer_hint = _alias_answer_hint_score(query, candidate.payload)
+                return (
+                    relevance + min(3, len(novel)) * 0.012 + answer_hint,
+                    relevance,
+                    candidate.identity,
+                )
 
             relevance, candidate = max(eligible, key=secondary_score)
             page = canonical_page_key(candidate.payload, candidate.identity)
@@ -255,6 +260,46 @@ def _answer_body_tokens(payload: dict[str, Any]) -> set[str]:
     """Return normalized answer-bearing tokens without front-matter matches."""
     _metadata, body = split_json_front_matter(payload.get("text"))
     return set(normalize_search_text(body).split())
+
+
+def _alias_answer_hint_score(query: str, payload: dict[str, Any]) -> float:
+    """Prefer a within-page chunk that substantiates a matched search alias.
+
+    Page aliases are intentionally repeated on every chunk so they can make the
+    canonical page discoverable. Once that page has been selected, however, a
+    matched query alias should help choose the body chunk containing a related
+    answer alias rather than another chunk that only repeats page metadata.
+    """
+    metadata, body = split_json_front_matter(payload.get("text"))
+    aliases = metadata.get("aliases")
+    if not isinstance(aliases, list):
+        return 0.0
+    alias_tokens = [
+        tokens
+        for alias in aliases
+        if isinstance(alias, str) and (tokens := _token_roots(alias))
+    ]
+    query_tokens = _token_roots(query)
+    matched = [tokens for tokens in alias_tokens if tokens <= query_tokens]
+    if not matched:
+        return 0.0
+
+    body_tokens = _token_roots(body)
+    related = [tokens for tokens in alias_tokens if tokens not in matched]
+    if not related:
+        return 0.0
+    coverage = max(len(tokens & body_tokens) / len(tokens) for tokens in related)
+    # A complete related alias is strong enough to beat a small RRF rank gap;
+    # partial overlap remains only a tie-breaker.
+    return 0.024 if coverage == 1.0 else coverage * 0.008
+
+
+def _token_roots(value: str) -> set[str]:
+    tokens = normalize_search_text(value).split()
+    return {
+        token[:-1] if len(token) > 4 and token.endswith("s") else token
+        for token in tokens
+    }
 
 
 def _historical_body(payload: dict[str, Any]) -> bool:

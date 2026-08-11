@@ -19,7 +19,9 @@ logger = get_logger("CompletionRetriever")
 CURRENTNESS_GUIDANCE = (
     "Retrieval policy: use active answer-bearing content. Status chunks are warnings, not "
     "answers. If facts conflict, prefer the most specific section whose heading matches the "
-    "question; do not silently combine contradictory values.\n\n"
+    "question; do not silently combine contradictory values. Preserve the most precise numeric "
+    "value supported by the selected evidence and do not round it; when the same value appears "
+    "at different precision, state the more precise form.\n\n"
 )
 
 
