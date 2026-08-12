@@ -28,8 +28,10 @@ from cognee.shared.logging_utils import get_logger
 from cognee.infrastructure.engine import DataPoint
 from cognee.infrastructure.databases.graph.graph_db_interface import GraphDBInterface
 from cognee.infrastructure.databases.relational import get_relational_config
+from cognee.modules.engine.utils.generate_timestamp_datapoint import date_to_int
 from cognee.modules.storage.utils import JSONEncoder
 from cognee.modules.graph.methods.sanitize_relational_payload import sanitize_relational_payload
+from cognee.tasks.temporal_graph.models import Timestamp
 from cognee.infrastructure.databases.provenance import (
     EdgeDeleteData,
     EdgeIdentity,
@@ -1571,6 +1573,98 @@ class PostgresAdapter(GraphDBInterface):
                         )
                     await session.commit()
         return None
+
+    async def collect_time_ids(
+        self,
+        time_from: Optional[Timestamp] = None,
+        time_to: Optional[Timestamp] = None,
+    ) -> List[str]:
+        """Return Timestamp node IDs inside the requested inclusive interval.
+
+        ``time_at`` is stored in the JSONB properties payload as Unix epoch
+        milliseconds.  Guard the cast so a malformed legacy value cannot make
+        every temporal recall request fail.
+        """
+        if time_from is None and time_to is None:
+            return []
+
+        predicates = [
+            "type = 'Timestamp'",
+            "(properties ->> 'time_at') ~ '^-?[0-9]+$'",
+        ]
+        params: Dict[str, int] = {}
+        if time_from is not None:
+            predicates.append("CAST(properties ->> 'time_at' AS bigint) >= :time_from")
+            params["time_from"] = date_to_int(time_from)
+        if time_to is not None:
+            predicates.append("CAST(properties ->> 'time_at' AS bigint) <= :time_to")
+            params["time_to"] = date_to_int(time_to)
+
+        statement = text(
+            "SELECT id FROM graph_node WHERE "
+            + " AND ".join(predicates)
+            + " ORDER BY id"
+        )
+        async with self._session() as session:
+            result = await session.execute(statement, params)
+            return [str(row[0]) for row in result.fetchall()]
+
+    async def collect_events(self, ids: Union[List[str], str]) -> List[Dict[str, Any]]:
+        """Collect distinct Event nodes reachable within one or two hops.
+
+        The recursive CTE follows graph edges in either direction and binds the
+        starting IDs as a PostgreSQL array.  It therefore preserves the temporal
+        retriever contract without interpolating identifiers into SQL.
+        """
+        if isinstance(ids, str):
+            normalized_ids = [
+                value.strip().strip("'\"") for value in ids.split(",") if value.strip()
+            ]
+        else:
+            normalized_ids = []
+            for value in ids:
+                rendered = str(value).strip()
+                if rendered:
+                    normalized_ids.append(rendered)
+        if not normalized_ids:
+            return [{"events": []}]
+
+        statement = text(
+            """
+            WITH RECURSIVE reachable(id, depth) AS (
+                SELECT unnest(CAST(:ids AS text[])), 0
+                UNION
+                SELECT
+                    CASE WHEN edge.source_id = reachable.id
+                         THEN edge.target_id ELSE edge.source_id END,
+                    reachable.depth + 1
+                FROM reachable
+                JOIN graph_edge AS edge
+                  ON edge.source_id = reachable.id OR edge.target_id = reachable.id
+                WHERE reachable.depth < 2
+            )
+            SELECT DISTINCT node.id, node.name, node.properties
+            FROM reachable
+            JOIN graph_node AS node ON node.id = reachable.id
+            WHERE reachable.depth BETWEEN 1 AND 2
+              AND node.type = 'Event'
+            ORDER BY node.id
+            """
+        )
+        async with self._session() as session:
+            result = await session.execute(statement, {"ids": normalized_ids})
+            events = []
+            for row in result.fetchall():
+                properties = self._props_dict(row[2])
+                event = {
+                    "id": str(row[0]),
+                    "name": row[1],
+                    "description": properties.get("description"),
+                }
+                if properties.get("location"):
+                    event["location"] = properties["location"]
+                events.append(event)
+            return [{"events": events}]
 
     async def get_triplets_batch(self, offset: int, limit: int) -> List[Dict[str, Any]]:
         """Retrieve a batch of (source, relationship, target) triplets.
