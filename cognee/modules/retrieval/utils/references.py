@@ -37,6 +37,7 @@ EVIDENCE_HEADER = "Evidence:"
 
 # Maximum length of a rendered text snippet (characters) before truncation.
 _SNIPPET_MAX_CHARS = 1_200
+_SNIPPET_HEAD_CHARS = 480
 
 # Hard upper bound on bullets regardless of the requested limit (3-5 range).
 _MAX_BULLETS = 5
@@ -158,12 +159,12 @@ def _snippet(
             return weighted, distinctive_margin, len(covered), -offset
 
         start = max(candidates, key=score)
-    if start > 240:
+    if start > _SNIPPET_HEAD_CHARS:
         # Preserve the chunk's identifying lead (for example a ship/faction
         # infobox row) alongside the answer-focused region. This makes
         # multi-hop citations inspectable instead of silently dropping the
         # first link in the chain when the strongest answer term is later.
-        head = collapsed[:240].rstrip()
+        head = collapsed[:_SNIPPET_HEAD_CHARS].rstrip()
         tail_limit = _SNIPPET_MAX_CHARS - len(head) - 3
         if focus_terms:
             start = max(candidates, key=lambda offset: score(offset, tail_limit))

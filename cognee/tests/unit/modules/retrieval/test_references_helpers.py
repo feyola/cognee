@@ -283,6 +283,29 @@ def test_supporting_snippet_prioritizes_distinctive_alphanumeric_claim_code():
     assert "E587 connects C12 Thera to C9" in result
 
 
+def test_supporting_snippet_keeps_complete_early_numeric_claim():
+    text = (
+        '---\ntitle: "Compression"\nchunk_index: 6\n---\n\n'
+        "# Compression ## Batch compressed ore "
+        + "Historical compression background. " * 7
+        + "100 units of ore compressed to 1 unit of compressed ore and are no longer creatable. "
+        + "The current system uses 1 to 1 compression. "
+        + "Volume details by ore type. " * 60
+    )
+
+    result = format_chunk_references(
+        [_payload(text=text, document_id="data-1", id="chunk-1")],
+        answer=(
+            "Batch Compressed Ore turned 100 units into 1 unit, is no longer creatable, "
+            "and current ore uses 1 to 1 compression."
+        ),
+    )
+
+    assert "100 units of ore compressed to 1 unit" in result
+    assert "no longer creatable" in result
+    assert "1 to 1 compression" in result
+
+
 def test_structured_answer_snippet_centers_claim_entities_not_json_fields():
     text = (
         '---\ndocument_id: "mediawiki:6281:231494:chunk:0002"\n'
