@@ -12,6 +12,7 @@ from cognee.infrastructure.databases.vector.exceptions import CollectionNotFound
 def test_currentness_guidance_preserves_precise_numeric_evidence():
     assert "most precise numeric value" in CURRENTNESS_GUIDANCE
     assert "do not round" in CURRENTNESS_GUIDANCE
+    assert "more specific matching section" in CURRENTNESS_GUIDANCE
 
 
 @pytest.fixture

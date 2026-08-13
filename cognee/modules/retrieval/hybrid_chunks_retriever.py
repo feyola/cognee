@@ -255,6 +255,15 @@ def _hybrid_relevance(query: str, candidate: _Candidate) -> float:
         section_tokens = set(normalize_search_text(" ".join(map(str, section_path))).split())
         relevance += min(3, len(query_tokens & section_tokens)) * 0.015
         normalized_sections = {normalize_search_text(str(value)) for value in section_path}
+        if any(
+            _contains_normalized_phrase(query_normalized, section)
+            for section in normalized_sections
+            if section
+        ):
+            # A question naming a section (for example "sales tax") should
+            # retrieve that answer-bearing section ahead of a broader page
+            # section that happens to rank slightly higher semantically.
+            relevance += 0.04
         if "summary" in normalized_sections or "overview" in normalized_sections:
             relevance += 0.018
         if "notes" in normalized_sections or "notes and references" in normalized_sections:

@@ -274,6 +274,36 @@ def test_secondary_chunk_prefers_more_uncovered_query_aspects():
     assert all("Skills reduce trading overhead" not in body for body in bodies)
 
 
+def test_named_section_beats_broader_higher_ranked_chunk_on_same_page():
+    url = "https://wiki.eveuniversity.org/Trading"
+    broad = _result(
+        _text(
+            "Trading",
+            url=url,
+            section=["Skills"],
+            body="Accounting and Broker Relations reduce trading overhead.",
+        )
+    )
+    exact = _result(
+        _text(
+            "Trading",
+            url=url,
+            section=["Taxes", "Sales tax"],
+            body="Sales tax is 7.5% and 3.37% at Accounting V.",
+        )
+    )
+
+    results = fuse_chunk_results(
+        "How does sales tax affect station trading?",
+        [broad, exact],
+        [],
+        top_k=1,
+        page_limit=1,
+    )
+
+    assert "3.37%" in results[0].payload["text"]
+
+
 def test_secondary_chunk_uses_related_alias_to_ground_answer_chain():
     url = "https://wiki.eveuniversity.org/Jump_drives"
     aliases = ["Sin fuel", "Oxygen Isotopes"]

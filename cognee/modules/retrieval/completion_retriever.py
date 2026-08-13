@@ -21,8 +21,10 @@ CURRENTNESS_GUIDANCE = (
     "Retrieval policy: use active answer-bearing content. Status chunks are warnings, not "
     "answers. If facts conflict, prefer the most specific section whose heading matches the "
     "question; do not silently combine contradictory values. Preserve the most precise numeric "
-    "value supported by the selected evidence and do not round it; when the same value appears "
-    "at different precision, state the more precise form.\n\n"
+    "value supported by the selected evidence and do not round it. When one source gives a "
+    "rounded value and a more specific matching section gives additional decimal places or a "
+    "formula, use the section's more precise value and treat the shorter form only as an "
+    "approximation.\n\n"
 )
 
 

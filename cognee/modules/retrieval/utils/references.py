@@ -88,7 +88,10 @@ def _significant_term_weights(text: str) -> dict[str, float]:
         token: 1.0
         + min(count, 5)
         + min(len(token), 12) / 12
-        + (2.0 if any(character.isdigit() for character in token) else 0.0)
+        # Alphanumeric codes and numeric values (E587, 7.5, etc.) are usually
+        # the decisive part of a claim. Make a window containing them beat a
+        # nearby paragraph with several generic overlapping nouns.
+        + (8.0 if any(character.isdigit() for character in token) else 0.0)
         for token, count in counts.items()
     }
 
@@ -133,15 +136,25 @@ def _snippet(
         for match in re.finditer(r"[a-z0-9]+", collapsed.lower()):
             if match.group() in focus_terms:
                 candidates.add(max(0, match.start() - 80))
+                candidates.add(max(0, match.start() - _SNIPPET_MAX_CHARS // 3))
 
         def score(
             offset: int, window_chars: int = _SNIPPET_MAX_CHARS
-        ) -> tuple[float, int, int]:
+        ) -> tuple[float, int, int, int]:
             excerpt = collapsed[offset : offset + window_chars]
             terms = set(re.findall(r"[a-z0-9]+", excerpt.lower()))
             covered = focus_terms & terms
             weighted = sum((focus_weights or {}).get(term, 1.0) for term in covered)
-            return weighted, len(covered), -offset
+            distinctive_margin = max(
+                (
+                    min(match.start(), window_chars - match.end())
+                    for match in re.finditer(r"[a-z0-9]+", excerpt.lower())
+                    if match.group() in covered
+                    and any(character.isdigit() for character in match.group())
+                ),
+                default=0,
+            )
+            return weighted, distinctive_margin, len(covered), -offset
 
         start = max(candidates, key=score)
     if start > 240:

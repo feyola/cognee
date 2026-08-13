@@ -264,6 +264,25 @@ def test_supporting_snippet_retains_leading_identity_for_multihop_claim():
     assert "The Sin has a jump drive" in result
 
 
+def test_supporting_snippet_prioritizes_distinctive_alphanumeric_claim_code():
+    text = (
+        '---\ndocument_id: "mediawiki:7611:1:chunk:0010"\n'
+        'title: "Wormhole attributes"\n'
+        'canonical_url: "https://wiki.eveuniversity.org/Wormhole_attributes"\n'
+        "chunk_index: 10\n---\n\n"
+        + "Thera null security wormhole space background. " * 50
+        + "E587 connects C12 Thera to C9 null security space. "
+        + "Visual wormhole identification notes. " * 50
+    )
+
+    result = format_chunk_references(
+        [_payload(text=text, document_id="data-1", id="chunk-1")],
+        answer="E587 connects Thera to null security space.",
+    )
+
+    assert "E587 connects C12 Thera to C9" in result
+
+
 def test_structured_answer_snippet_centers_claim_entities_not_json_fields():
     text = (
         '---\ndocument_id: "mediawiki:6281:231494:chunk:0002"\n'
