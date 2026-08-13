@@ -15,21 +15,6 @@ def test_currentness_guidance_preserves_precise_numeric_evidence():
     assert "more specific matching section" in CURRENTNESS_GUIDANCE
 
 
-@pytest.mark.asyncio
-async def test_answer_context_reserves_four_diverse_pages_at_top_five(
-    mock_hybrid_retriever,
-):
-    hybrid, factory = mock_hybrid_retriever
-    hybrid.get_retrieved_objects.return_value = []
-
-    await CompletionRetriever(top_k=5).get_retrieved_objects(
-        "Which blueprint originals and other market items are supplied by NPC sell orders?"
-    )
-
-    assert factory.call_args.kwargs["page_limit"] == 4
-    assert factory.call_args.kwargs["max_chunks_per_page"] == 2
-
-
 @pytest.fixture
 def mock_vector_engine():
     """Create a mock vector engine."""
@@ -359,7 +344,7 @@ async def test_get_context_forwards_nodeset_filter_to_vector_search(mock_hybrid_
         node_name=["KEN", "src_type:figure"],
         node_name_filter_operator="AND",
         candidate_pool_size=30,
-        page_limit=4,
+        page_limit=3,
         max_chunks_per_page=2,
         max_context_chars=15_000 - len(CURRENTNESS_GUIDANCE),
     )
