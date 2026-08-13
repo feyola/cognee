@@ -469,6 +469,46 @@ def test_exact_identifier_selects_answer_bearing_table_over_flat_alias_overview(
     assert "E587 | Thera | Nullsec" in result.payload["text"]
 
 
+def test_body_gated_alias_relations_reserve_distinct_support_pages():
+    blueprint = _result(_text("Blueprints", body="NPC sellers offer Tech 1 BPOs."))
+    skills = _result(
+        _text(
+            "Skills and learning",
+            alias_relations={"NPC sell orders": ["skillbooks", "fixed price"]},
+            body="Most skillbooks are sold by NPC corporations at a fixed price.",
+        )
+    )
+    colony = _result(
+        _text(
+            "Setting up a planetary colony",
+            alias_relations={
+                "NPC sell orders": ["Planetary Command Center", "NPC merchants"]
+            },
+            body="A Planetary Command Center is sold by NPC merchants.",
+        )
+    )
+    generic_market = _result(
+        _text("Trading", body="Market buy and sell orders have regional prices.")
+    )
+
+    results = fuse_chunk_results(
+        "Which items come from NPC sell orders?",
+        [blueprint, generic_market, skills, colony],
+        [
+            (blueprint.payload, 12.0),
+            (generic_market.payload, 11.0),
+            (skills.payload, 5.0),
+            (colony.payload, 4.0),
+        ],
+        top_k=3,
+        page_limit=3,
+    )
+
+    titles = [parse_json_front_matter(result.payload["text"])["title"] for result in results]
+    assert titles[:2] == ["Skills and learning", "Setting up a planetary colony"]
+    assert titles[2] == "Blueprints"
+
+
 def test_related_alias_evidence_outranks_unrelated_flat_alias():
     url = "https://wiki.eveuniversity.org/Jump_drives"
     distractor = _result(

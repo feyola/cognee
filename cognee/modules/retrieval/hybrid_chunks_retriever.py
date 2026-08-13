@@ -92,6 +92,22 @@ def fuse_chunk_results(
     selected: list[tuple[float, _Candidate]] = []
     selected_pages: set[str] = set()
     page_counts: dict[str, int] = {}
+    # Explicit alias relations describe which source-body terms answer a
+    # recognized query phrase. Reserve their distinct pages before generic
+    # fused pages so multi-part questions retain every configured support page.
+    # The hint is body-gated, so metadata alone cannot reserve a page.
+    for relevance, candidate in ranked:
+        if _alias_answer_hint_score(query, candidate.payload) <= 0:
+            continue
+        page = canonical_page_key(candidate.payload, candidate.identity)
+        if page in selected_pages:
+            continue
+        selected.append((relevance, candidate))
+        selected_pages.add(page)
+        page_counts[page] = 1
+        if len(selected_pages) >= page_limit or len(selected) >= top_k:
+            break
+
     for relevance, candidate in ranked:
         page = canonical_page_key(candidate.payload, candidate.identity)
         if page in selected_pages:
