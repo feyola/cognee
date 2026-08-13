@@ -155,6 +155,44 @@ def test_shared_supply_alias_promotes_distinct_answer_pages():
     } == {"Blueprints", "Skills and learning", "Setting up a planetary colony"}
 
 
+def test_related_alias_selects_answer_bearing_primary_chunk():
+    url = "https://wiki.eveuniversity.org/Skills_and_learning"
+    relations = {
+        "NPC sell orders": [
+            "skillbooks",
+            "sold by NPC corporations",
+            "fixed price",
+        ]
+    }
+    overview = _result(
+        _text(
+            "Skills and learning",
+            url=url,
+            aliases=["NPC sell orders"],
+            alias_relations=relations,
+            body="Skills train character abilities over time.",
+        )
+    )
+    acquiring = _result(
+        _text(
+            "Skills and learning",
+            url=url,
+            aliases=["NPC sell orders"],
+            alias_relations=relations,
+            body="Most skillbooks are sold by NPC corporations for a fixed price.",
+        )
+    )
+
+    [result] = fuse_chunk_results(
+        "Which items are supplied by NPC sell orders?",
+        [overview, acquiring],
+        [(overview.payload, 10.0), (acquiring.payload, 9.0)],
+        top_k=1,
+    )
+
+    assert "sold by NPC corporations" in result.payload["text"]
+
+
 def test_answer_body_overlap_selects_the_supporting_chunk_within_a_page():
     url = "https://wiki.eveuniversity.org/Insurgency"
     overview = _result(

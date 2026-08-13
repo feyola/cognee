@@ -273,6 +273,7 @@ def _hybrid_relevance(query: str, candidate: _Candidate) -> float:
     # within an already-ranked page without overriding title/section/status policy.
     specific_query_tokens = {token for token in query_tokens if len(token) >= 7}
     relevance += min(3, len(specific_query_tokens & answer_tokens)) * 0.003
+    relevance += _alias_answer_hint_score(query, candidate.payload)
     if _status_stub(candidate.payload):
         relevance -= 0.04
     return relevance
@@ -304,20 +305,25 @@ def _alias_answer_hint_score(query: str, payload: dict[str, Any]) -> float:
         return 0.0
     query_tokens = _token_roots(query)
     body_tokens = _token_roots(body)
-    coverage = 0.0
+    best_score = 0.0
     for trigger, answer_terms in relations.items():
         trigger_tokens = _token_roots(trigger) if isinstance(trigger, str) else set()
         if not trigger_tokens or not trigger_tokens <= query_tokens:
             continue
         if not isinstance(answer_terms, list):
             continue
+        coverages: list[float] = []
         for answer_term in answer_terms:
             answer_tokens = _token_roots(answer_term) if isinstance(answer_term, str) else set()
             if answer_tokens:
-                coverage = max(coverage, len(answer_tokens & body_tokens) / len(answer_tokens))
-    # A complete related alias is strong enough to beat a small RRF rank gap;
-    # partial overlap remains only a tie-breaker.
-    return 0.024 if coverage == 1.0 else coverage * 0.008
+                coverages.append(len(answer_tokens & body_tokens) / len(answer_tokens))
+        complete = sum(coverage == 1.0 for coverage in coverages)
+        partial = sum(coverage for coverage in coverages if coverage < 1.0)
+        # Multiple independently configured answer phrases should promote the
+        # chunk that actually contains the complete relation, not whichever
+        # page overview happened to rank first for the shared alias.
+        best_score = max(best_score, min(0.12, complete * 0.03 + partial * 0.008))
+    return best_score
 
 
 def _exact_section_match_score(query: str, payload: dict[str, Any]) -> float:
