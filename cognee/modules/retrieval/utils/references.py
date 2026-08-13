@@ -36,7 +36,7 @@ logger = get_logger("references")
 EVIDENCE_HEADER = "Evidence:"
 
 # Maximum length of a rendered text snippet (characters) before truncation.
-_SNIPPET_MAX_CHARS = 960
+_SNIPPET_MAX_CHARS = 1_200
 
 # Hard upper bound on bullets regardless of the requested limit (3-5 range).
 _MAX_BULLETS = 5
