@@ -289,20 +289,19 @@ async def _build_global_context_index(
     user,
 ) -> bool:
     from cognee.memify_pipelines.global_context_index import global_context_index_pipeline
+    from cognee.modules.pipelines.models import PipelineRunErrored
 
-    try:
-        await global_context_index_pipeline(
-            user=user,
-            dataset=dataset,
-            run_in_background=False,
-            bucketing_strategy="graph",
-            max_bucket_size=4,
-        )
-        logger.info("improve: global context index updated")
-        return True
-    except Exception as e:
-        logger.warning("improve: global context index update failed (non-fatal): %s", e)
-        return False
+    result = await global_context_index_pipeline(
+        user=user,
+        dataset=dataset,
+        run_in_background=False,
+        bucketing_strategy="graph",
+        max_bucket_size=4,
+    )
+    if isinstance(result, PipelineRunErrored):
+        raise RuntimeError("global context index pipeline failed")
+    logger.info("improve: global context index updated")
+    return True
 
 
 async def _bridge_sessions(

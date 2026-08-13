@@ -189,3 +189,33 @@ async def test_openai_compatible_embedding_does_not_retry_unsplittable_context_w
         await engine.embed_text(["ab"])
 
     assert create_mock.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_openai_compatible_embedding_handles_llama_cpp_context_size_error():
+    with patch(
+        "cognee.infrastructure.databases.vector.embeddings.OpenAICompatibleEmbeddingEngine."
+        "OpenAICompatibleEmbeddingEngine.get_tokenizer",
+        return_value=Mock(),
+    ):
+        from cognee.infrastructure.databases.vector.embeddings.OpenAICompatibleEmbeddingEngine import (
+            OpenAICompatibleEmbeddingEngine,
+        )
+
+        engine = OpenAICompatibleEmbeddingEngine(model="test-model", dimensions=2)
+
+    async def fake_create(*, input, **_kwargs):
+        if input == ["too long"]:
+            raise RuntimeError(
+                "request exceeds the available context size; exceed_context_size_error"
+            )
+        vector = [1.0, 1.0] if input == ["too "] else [3.0, 3.0]
+        return Mock(data=[Mock(embedding=vector)])
+
+    create_mock = AsyncMock(side_effect=fake_create)
+    engine._client.embeddings.create = create_mock
+
+    result = await engine.embed_text(["too long"])
+
+    assert result == [[2.0, 2.0]]
+    assert create_mock.await_count == 3

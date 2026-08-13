@@ -160,6 +160,8 @@ class OpenAICompatibleEmbeddingEngine(EmbeddingEngine):
             context_error_patterns = (
                 "context length",
                 "context window",
+                "context size",
+                "exceed_context_size_error",
                 "too long",
                 "maximum context",
                 "maximum tokens",
