@@ -64,6 +64,20 @@ def test_rrf_and_alias_boost_promote_canonical_page():
     assert parse_json_front_matter(results[0].payload["text"])["title"] == "Planetary Industry"
 
 
+def test_alias_boost_requires_a_contiguous_phrase():
+    trading = _result(_text("Trading", aliases=["Station trading"]))
+    skill_trading = _result(_text("Skill trading", aliases=["Skills trading"]))
+
+    results = fuse_chunk_results(
+        "How does station trading profitability change and which skills reduce fees?",
+        [skill_trading, trading],
+        [(skill_trading.payload, 10.0), (trading.payload, 9.0)],
+        top_k=2,
+    )
+
+    assert parse_json_front_matter(results[0].payload["text"])["title"] == "Trading"
+
+
 def test_answer_body_overlap_selects_the_supporting_chunk_within_a_page():
     url = "https://wiki.eveuniversity.org/Insurgency"
     overview = _result(

@@ -54,6 +54,26 @@ async def test_get_context_success(mock_hybrid_retriever):
 
 
 @pytest.mark.asyncio
+async def test_answer_context_groups_supporting_chunks_by_selected_page(mock_hybrid_retriever):
+    def result(title: str, url: str, body: str):
+        item = MagicMock()
+        item.payload = {"text": (f'---\ntitle: "{title}"\ncanonical_url: "{url}"\n---\n\n{body}')}
+        return item
+
+    trading_url = "https://wiki.eveuniversity.org/Trading"
+    tax_url = "https://wiki.eveuniversity.org/Tax"
+    trading_overview = result("Trading", trading_url, "Station trading overview")
+    tax = result("Tax", tax_url, "Rounded tax summary")
+    trading_rate = result("Trading", trading_url, "Precise current rate")
+    hybrid, _ = mock_hybrid_retriever
+    hybrid.get_retrieved_objects.return_value = [trading_overview, tax, trading_rate]
+
+    objects = await CompletionRetriever(top_k=3).get_retrieved_objects("station trading tax")
+
+    assert objects == [trading_overview, trading_rate, tax]
+
+
+@pytest.mark.asyncio
 async def test_get_context_collection_not_found_error(mock_hybrid_retriever):
     """Test that missing hybrid data is surfaced as NoDataError."""
     hybrid, _ = mock_hybrid_retriever

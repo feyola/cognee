@@ -230,7 +230,7 @@ def _hybrid_relevance(query: str, candidate: _Candidate) -> float:
     normalized_names = [normalize_search_text(name) for name in names]
     if query_normalized and query_normalized in normalized_names:
         relevance += 0.12
-    elif any(set(name.split()) <= query_tokens for name in normalized_names if name):
+    elif any(_contains_normalized_phrase(query_normalized, name) for name in normalized_names):
         relevance += 0.06
 
     section_path = metadata.get("section_path")
@@ -245,6 +245,13 @@ def _hybrid_relevance(query: str, candidate: _Candidate) -> float:
     if _status_stub(candidate.payload):
         relevance -= 0.04
     return relevance
+
+
+def _contains_normalized_phrase(query: str, phrase: str) -> bool:
+    """Match a title or alias as a contiguous phrase, not scattered query words."""
+    if not query or not phrase:
+        return False
+    return f" {phrase} " in f" {query} "
 
 
 def _status_stub(payload: dict[str, Any]) -> bool:

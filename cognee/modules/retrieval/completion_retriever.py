@@ -13,6 +13,7 @@ from cognee.modules.retrieval.hybrid_chunks_retriever import (
     DEFAULT_MAX_CONTEXT_CHARS,
     HybridChunksRetriever,
 )
+from cognee.modules.retrieval.utils.chunk_metadata import canonical_page_key
 
 logger = get_logger("CompletionRetriever")
 
@@ -73,7 +74,8 @@ class CompletionRetriever(BaseRetriever):
             max_chunks_per_page=self.max_chunks_per_page,
             max_context_chars=candidate_context_limit,
         )
-        return await retriever.get_retrieved_objects(query)
+        results = await retriever.get_retrieved_objects(query)
+        return _group_answer_chunks_by_page(results)
 
     def _extract_context_object_ids(self, retrieved_objects: Any) -> Optional[Dict[str, List[str]]]:
         """Extract node_ids from ScoredResult-like list for session QA."""
@@ -187,3 +189,22 @@ class CompletionRetriever(BaseRetriever):
             retrieved_objects,
             enabled=self.include_references and self.response_model is str,
         )
+
+
+def _group_answer_chunks_by_page(retrieved_objects: Any) -> Any:
+    """Keep each selected page's supporting chunks adjacent for answer synthesis."""
+    if not isinstance(retrieved_objects, list) or len(retrieved_objects) < 2:
+        return retrieved_objects
+    grouped: dict[str, list[Any]] = {}
+    page_order: list[str] = []
+    for index, result in enumerate(retrieved_objects):
+        payload = getattr(result, "payload", None)
+        if not isinstance(payload, dict):
+            page = f"result:{index}"
+        else:
+            page = canonical_page_key(payload, f"result:{index}")
+        if page not in grouped:
+            grouped[page] = []
+            page_order.append(page)
+        grouped[page].append(result)
+    return [result for page in page_order for result in grouped[page]]
