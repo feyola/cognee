@@ -119,6 +119,42 @@ def test_related_alias_can_match_noncontiguous_query_terms():
     assert parse_json_front_matter(results[0].payload["text"])["title"] == "Jump drives"
 
 
+def test_shared_supply_alias_promotes_distinct_answer_pages():
+    blueprints = _result(_text("Blueprints", aliases=["Blueprint Originals"]))
+    skillbooks = _result(
+        _text(
+            "Skills and learning",
+            aliases=["NPC sell orders"],
+            alias_relations={
+                "NPC sell orders": ["skillbooks", "sold by NPC corporations"]
+            },
+            body="Most skillbooks are sold by NPC corporations for a fixed price.",
+        )
+    )
+    command_centers = _result(
+        _text(
+            "Setting up a planetary colony",
+            aliases=["NPC sell orders"],
+            alias_relations={
+                "NPC sell orders": ["Planetary Command Center", "sold by NPC merchants"]
+            },
+            body="Planetary Command Centers are sold by NPC merchants.",
+        )
+    )
+    noise = [_result(_text(title)) for title in ("Trading", "Industry", "Research")]
+
+    results = fuse_chunk_results(
+        "blueprint originals and other market items supplied by NPC sell orders",
+        noise + [blueprints, skillbooks, command_centers],
+        [(result.payload, 10.0 - rank) for rank, result in enumerate(noise)],
+        top_k=3,
+    )
+
+    assert {
+        parse_json_front_matter(result.payload["text"])["title"] for result in results
+    } == {"Blueprints", "Skills and learning", "Setting up a planetary colony"}
+
+
 def test_answer_body_overlap_selects_the_supporting_chunk_within_a_page():
     url = "https://wiki.eveuniversity.org/Insurgency"
     overview = _result(
