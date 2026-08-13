@@ -334,6 +334,31 @@ def test_answer_filtering_ranks_by_overlap():
     assert result.index("strong.pdf") < result.index("weak.pdf")
 
 
+def test_answer_filtering_keeps_summary_link_for_multihop_citation():
+    summary = _payload(
+        document_name="sin-summary.md",
+        chunk_index=6,
+        text=(
+            '---\ntitle: "Sin"\nsection_path: ["Summary"]\n'
+            'chunk_kind: "prose"\n---\n\nThe Sin is a Gallente Black Ops.'
+        ),
+    )
+    table = _payload(
+        document_name="sin-table.md",
+        chunk_index=4,
+        text=(
+            '---\ntitle: "Sin"\nsection_path: ["Statistics"]\n'
+            'chunk_kind: "table"\n---\n\nThe Sin has a jump fuel capacity.'
+        ),
+    )
+
+    result = format_chunk_references(
+        [table, summary], answer="The Sin uses Oxygen Isotopes as jump fuel."
+    )
+
+    assert result.index("Gallente") < result.index("capacity")
+
+
 def test_answer_with_no_significant_terms_yields_no_evidence():
     """An answer made of stopwords/stubs cannot be grounded -> empty string."""
     assert format_chunk_references([_payload()], answer="It is.") == ""

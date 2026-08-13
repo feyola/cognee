@@ -387,6 +387,17 @@ def format_chunk_references(
                 # No term from the answer appears in this chunk: it is almost
                 # certainly not a source of the answer.
                 continue
+            section_path = metadata.get("section_path")
+            if isinstance(section_path, list):
+                sections = {str(value).strip().casefold() for value in section_path}
+                if "summary" in sections:
+                    score += 3
+                elif "overview" in sections:
+                    score += 1
+                if "notes" in sections or "notes and references" in sections:
+                    score -= 3
+            if metadata.get("chunk_kind") == "table":
+                score -= 2
 
         candidates.append(
             (
