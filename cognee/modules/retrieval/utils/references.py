@@ -136,18 +136,10 @@ def _snippet(
     start = 0
     candidates = {0}
     if focus_terms:
-        token_matches = list(re.finditer(r"[a-z0-9]+", collapsed.lower()))
-        for match in token_matches:
+        for match in re.finditer(r"[a-z0-9]+", collapsed.lower()):
             if match.group() in focus_terms:
                 candidates.add(max(0, match.start() - 80))
                 candidates.add(max(0, match.start() - _SNIPPET_MAX_CHARS // 3))
-        for left, right in zip(token_matches, token_matches[1:]):
-            if (
-                left.group() in focus_terms
-                and right.group() in focus_terms
-                and right.start() - left.end() <= 20
-            ):
-                candidates.add(max(0, left.start() - _SNIPPET_MAX_CHARS // 2))
 
         def score(
             offset: int, window_chars: int = _SNIPPET_MAX_CHARS
@@ -165,14 +157,7 @@ def _snippet(
                 ),
                 default=0,
             )
-            excerpt_matches = list(re.finditer(r"[a-z0-9]+", excerpt.lower()))
-            nearby_pairs = sum(
-                left.group() in focus_terms
-                and right.group() in focus_terms
-                and right.start() - left.end() <= 20
-                for left, right in zip(excerpt_matches, excerpt_matches[1:])
-            )
-            return weighted + nearby_pairs * 2, distinctive_margin, len(covered), -offset
+            return weighted, distinctive_margin, len(covered), -offset
 
         start = max(candidates, key=score)
     if focus_terms:
