@@ -439,6 +439,36 @@ def test_secondary_chunk_uses_related_alias_to_ground_answer_chain():
     assert all("general overview" not in body for body in bodies)
 
 
+def test_exact_identifier_selects_answer_bearing_table_over_flat_alias_overview():
+    url = "https://wiki.eveuniversity.org/Wormhole_attributes"
+    aliases = ["C12", "C9", "E587", "Thera to nullsec", "wormhole connection"]
+    overview = _result(
+        _text(
+            "Wormhole attributes",
+            url=url,
+            aliases=aliases,
+            body="Wormhole colors can reveal a destination skybox.",
+        )
+    )
+    relation_table = _result(
+        _text(
+            "Wormhole attributes",
+            url=url,
+            aliases=aliases,
+            body="| Code | Source | Destination | Class |\n| E587 | Thera | Nullsec | 9 |",
+        )
+    )
+
+    [result] = fuse_chunk_results(
+        "What connection leads from C12 Thera to C9 null security space? E587",
+        [overview, relation_table],
+        [(overview.payload, 10.0), (relation_table.payload, 9.0)],
+        top_k=1,
+    )
+
+    assert "E587 | Thera | Nullsec" in result.payload["text"]
+
+
 def test_related_alias_evidence_outranks_unrelated_flat_alias():
     url = "https://wiki.eveuniversity.org/Jump_drives"
     distractor = _result(

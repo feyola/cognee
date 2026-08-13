@@ -273,6 +273,18 @@ def _hybrid_relevance(query: str, candidate: _Candidate) -> float:
     # within an already-ranked page without overriding title/section/status policy.
     specific_query_tokens = {token for token in query_tokens if len(token) >= 7}
     relevance += min(3, len(specific_query_tokens & answer_tokens)) * 0.003
+    # Exact alphanumeric identifiers are frequently the decisive evidence in
+    # compact tables (E587, C729, EVE item/type codes).  Give the chunk that
+    # actually contains the queried identifier enough weight to beat a generic
+    # same-page overview selected only through shared aliases.  Metadata is not
+    # considered here: aliases can discover the page but cannot prove a fact.
+    identifier_tokens = {
+        token
+        for token in query_tokens
+        if any(character.isalpha() for character in token)
+        and any(character.isdigit() for character in token)
+    }
+    relevance += min(2, len(identifier_tokens & answer_tokens)) * 0.04
     relevance += _alias_answer_hint_score(query, candidate.payload)
     if _status_stub(candidate.payload):
         relevance -= 0.04

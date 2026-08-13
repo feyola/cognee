@@ -447,7 +447,8 @@ def test_answer_filtering_keeps_table_with_distinctive_claim_code():
             'chunk_kind: "table"\n'
             'aliases: ["Wormhole Information", "Wormhole Types", "C12", "C9", '
             '"E587", "Thera to nullsec"]\n'
-            '---\n\nA compact connection table.'
+            '---\n\n| Code | Source | Destination | Class |\n'
+            '| E587 | Thera | Nullsec (0.0) | 9 |'
         ),
     )
     generic = _payload(
@@ -461,7 +462,26 @@ def test_answer_filtering_keeps_table_with_distinctive_claim_code():
     )
 
     assert result.index("Wormhole attributes") < result.index("wormholes.md")
-    assert "C12; C9; E587; Thera to nullsec" in result
+    assert "E587 | Thera | Nullsec" in result
+    assert "Indexed search aliases" not in result
+
+
+def test_flat_aliases_are_not_rendered_as_factual_evidence():
+    alias_only = _payload(
+        document_name="wormhole-visuals.md",
+        chunk_index=9,
+        text=(
+            '---\ntitle: "Wormhole attributes"\nchunk_kind: "prose"\n'
+            'aliases: ["C12", "C9", "E587", "Thera to nullsec"]\n'
+            '---\n\nWormhole colors help pilots identify a destination skybox.'
+        ),
+    )
+
+    result = format_chunk_references(
+        [alias_only], answer="E587 connects Thera to C9 null security space."
+    )
+
+    assert result == ""
 
 
 def test_answer_filtering_keeps_matching_status_warning():
