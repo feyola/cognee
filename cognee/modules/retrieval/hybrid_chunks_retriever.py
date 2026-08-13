@@ -130,8 +130,12 @@ def fuse_chunk_results(
                     candidate.payload
                 ) & query_tokens - page_query_coverage.get(page, set())
                 answer_hint = _alias_answer_hint_score(query, candidate.payload)
+                section_match = _exact_section_match_score(query, candidate.payload)
                 return (
-                    relevance + min(3, len(novel)) * 0.012 + answer_hint,
+                    relevance
+                    + min(3, len(novel)) * 0.012
+                    + answer_hint
+                    + section_match,
                     relevance,
                     candidate.identity,
                 )
@@ -255,23 +259,8 @@ def _hybrid_relevance(query: str, candidate: _Candidate) -> float:
         section_tokens = set(normalize_search_text(" ".join(map(str, section_path))).split())
         relevance += min(3, len(query_tokens & section_tokens)) * 0.015
         normalized_sections = {normalize_search_text(str(value)) for value in section_path}
-        matching_section_size = max(
-            (
-                len(section.split())
-                for section in normalized_sections
-                if section and _contains_normalized_phrase(query_normalized, section)
-            ),
-            default=0,
-        )
-        if matching_section_size:
-            # A question naming a section (for example "sales tax") should
-            # retrieve that answer-bearing section ahead of a broader page
-            # section that happens to rank slightly higher semantically. A
-            # multi-word section is more discriminating than a generic
-            # single-word section such as "Skills".
-            relevance += min(0.12, matching_section_size * 0.04)
         if "summary" in normalized_sections or "overview" in normalized_sections:
-            relevance += 0.018
+            relevance += 0.05 if "summary" in normalized_sections else 0.02
         if "notes" in normalized_sections or "notes and references" in normalized_sections:
             relevance -= 0.02
     chunk_index = metadata.get("chunk_index")
@@ -329,6 +318,25 @@ def _alias_answer_hint_score(query: str, payload: dict[str, Any]) -> float:
     # A complete related alias is strong enough to beat a small RRF rank gap;
     # partial overlap remains only a tie-breaker.
     return 0.024 if coverage == 1.0 else coverage * 0.008
+
+
+def _exact_section_match_score(query: str, payload: dict[str, Any]) -> float:
+    """Favor a specifically named section only after its canonical page wins."""
+    metadata = parse_json_front_matter(payload.get("text"))
+    section_path = metadata.get("section_path")
+    if not isinstance(section_path, list):
+        return 0.0
+    query_normalized = normalize_search_text(query)
+    matching_size = max(
+        (
+            len(section.split())
+            for value in section_path
+            if (section := normalize_search_text(str(value)))
+            and _contains_normalized_phrase(query_normalized, section)
+        ),
+        default=0,
+    )
+    return min(0.12, matching_size * 0.04)
 
 
 def _token_roots(value: str) -> set[str]:

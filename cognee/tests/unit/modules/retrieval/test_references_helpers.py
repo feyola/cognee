@@ -392,6 +392,54 @@ def test_answer_filtering_keeps_summary_link_for_multihop_citation():
     assert result.index("Gallente") < result.index("capacity")
 
 
+def test_answer_filtering_keeps_table_with_distinctive_claim_code():
+    exact = _payload(
+        document_name="wormhole-table.md",
+        chunk_index=10,
+        text=(
+            '---\ntitle: "Wormhole attributes"\nsection_path: ["Connections"]\n'
+            'chunk_kind: "table"\n---\n\nE587 connects C12 Thera to C9 Nullsec.'
+        ),
+    )
+    generic = _payload(
+        document_name="wormholes.md",
+        chunk_index=2,
+        text="Thera has many wormhole connections to null security space.",
+    )
+
+    result = format_chunk_references(
+        [generic, exact], answer="E587 connects Thera to C9 null security space."
+    )
+
+    assert result.index("Wormhole attributes") < result.index("wormholes.md")
+
+
+def test_answer_filtering_keeps_matching_status_warning():
+    status = _payload(
+        document_name="reprocessing-status.md",
+        chunk_index=0,
+        text=(
+            '---\ntitle: "Reprocessing"\nsection_path: ["Status"]\n'
+            'chunk_kind: "status"\n---\n\nAnalytical content is excluded because this page is outdated.'
+        ),
+    )
+    prose = [
+        _payload(
+            document_name=f"compression-{index}.md",
+            chunk_index=index,
+            text=f"Compression and reprocessing yield details number {index}.",
+        )
+        for index in range(6)
+    ]
+
+    result = format_chunk_references(
+        [*prose, status],
+        answer="The Reprocessing analytical content is outdated and excluded.",
+    )
+
+    assert "document Reprocessing" in result
+
+
 def test_answer_with_no_significant_terms_yields_no_evidence():
     """An answer made of stopwords/stubs cannot be grounded -> empty string."""
     assert format_chunk_references([_payload()], answer="It is.") == ""

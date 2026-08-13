@@ -81,7 +81,8 @@ def _significant_term_weights(text: str) -> dict[str, float]:
     tokens = [
         token
         for token in re.findall(r"[a-z0-9]+", text.lower())
-        if len(token) >= 3 and token not in _STOPWORDS
+        if (len(token) >= 3 or any(character.isdigit() for character in token))
+        and token not in _STOPWORDS
     ]
     counts = Counter(tokens)
     return {
@@ -340,7 +341,7 @@ def format_chunk_references(
     # (overlap, name, URL, source index, fallback number, body, provenance ids).
     candidates: List[
         Tuple[
-            int,
+            float,
             str,
             Optional[str],
             Optional[int],
@@ -396,7 +397,9 @@ def format_chunk_references(
         if answer_terms is not None:
             chunk_terms = set(re.findall(r"[a-z0-9]+", body.lower()))
             overlap_terms = answer_terms & chunk_terms
-            score = len(overlap_terms)
+            score = sum(
+                (answer_term_weights or {}).get(term, 1.0) for term in overlap_terms
+            )
             if score == 0:
                 # No term from the answer appears in this chunk: it is almost
                 # certainly not a source of the answer.
@@ -413,7 +416,18 @@ def format_chunk_references(
                 if "notes" in sections or "notes and references" in sections:
                     score -= 3
             if metadata.get("chunk_kind") == "table":
-                score -= 2
+                if not any(
+                    any(character.isdigit() for character in term)
+                    for term in overlap_terms
+                ):
+                    score -= 2
+            if metadata.get("chunk_kind") == "status" and overlap_terms & {
+                "outdated",
+                "historical",
+                "excluded",
+                "warning",
+            }:
+                score += 4
             title_terms = _significant_terms(document_name)
             title_in_answer = bool(title_terms) and title_terms <= answer_terms
             has_distinctive_overlap = any(
