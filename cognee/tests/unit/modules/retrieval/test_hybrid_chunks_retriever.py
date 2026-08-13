@@ -78,6 +78,27 @@ def test_alias_boost_requires_a_contiguous_phrase():
     assert parse_json_front_matter(results[0].payload["text"])["title"] == "Trading"
 
 
+def test_related_alias_can_match_noncontiguous_query_terms():
+    mission = _result(_text("Activist Fuel"))
+    jump_drives = _result(
+        _text(
+            "Jump drives",
+            aliases=["Sin fuel"],
+            alias_relations={"Sin fuel": ["Oxygen Isotopes"]},
+            body="Gallente jump ships use Oxygen Isotopes.",
+        )
+    )
+
+    results = fuse_chunk_results(
+        "What kind of fuel is used by Sin?",
+        [mission, jump_drives],
+        [(mission.payload, 10.0), (jump_drives.payload, 9.0)],
+        top_k=2,
+    )
+
+    assert parse_json_front_matter(results[0].payload["text"])["title"] == "Jump drives"
+
+
 def test_answer_body_overlap_selects_the_supporting_chunk_within_a_page():
     url = "https://wiki.eveuniversity.org/Insurgency"
     overview = _result(
@@ -258,7 +279,7 @@ def test_secondary_chunk_uses_related_alias_to_ground_answer_chain():
     assert all("general overview" not in body for body in bodies)
 
 
-def test_secondary_chunk_does_not_treat_unrelated_flat_alias_as_evidence():
+def test_related_alias_evidence_outranks_unrelated_flat_alias():
     url = "https://wiki.eveuniversity.org/Jump_drives"
     distractor = _result(
         _text(
@@ -287,7 +308,8 @@ def test_secondary_chunk_does_not_treat_unrelated_flat_alias_as_evidence():
         max_chunks_per_page=2,
     )
 
-    assert "Oxygen Isotopes" in results[1].payload["text"]
+    assert "Oxygen Isotopes" in results[0].payload["text"]
+    assert "Cynosural Field" in results[1].payload["text"]
 
 
 def test_historical_body_is_excluded_but_status_warning_remains_discoverable():

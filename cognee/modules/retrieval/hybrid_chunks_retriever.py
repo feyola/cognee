@@ -228,9 +228,17 @@ def _hybrid_relevance(query: str, candidate: _Candidate) -> float:
     aliases = metadata.get("aliases")
     names = [metadata.get("title"), *(aliases if isinstance(aliases, list) else [])]
     normalized_names = [normalize_search_text(name) for name in names]
+    alias_relations = metadata.get("alias_relations")
+    related_aliases = (
+        [normalize_search_text(name) for name in alias_relations if isinstance(name, str)]
+        if isinstance(alias_relations, dict)
+        else []
+    )
     if query_normalized and query_normalized in normalized_names:
         relevance += 0.12
-    elif any(_contains_normalized_phrase(query_normalized, name) for name in normalized_names):
+    elif any(
+        _contains_normalized_phrase(query_normalized, name) for name in normalized_names
+    ) or any(set(name.split()) <= query_tokens for name in related_aliases if name):
         relevance += 0.06
 
     section_path = metadata.get("section_path")
