@@ -206,12 +206,15 @@ class HybridChunksRetriever(ChunksRetriever):
 
 
 def _candidate_identity(result: Any, payload: dict[str, Any]) -> str:
-    value = getattr(result, "id", None)
+    # The vector result id and lexical payload id are backend-specific and may
+    # differ for the same chunk. ES front matter provides the stable identity
+    # required to fuse both channels without consuming context slots twice.
+    metadata = parse_json_front_matter(payload.get("text"))
+    value = metadata.get("document_id")
+    if value is None:
+        value = getattr(result, "id", None)
     if value is None:
         value = payload.get("id")
-    if value is None:
-        metadata = parse_json_front_matter(payload.get("text"))
-        value = metadata.get("document_id")
     return str(value) if value is not None else canonical_page_key(payload, repr(payload))
 
 

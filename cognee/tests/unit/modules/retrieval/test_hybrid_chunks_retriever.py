@@ -64,6 +64,25 @@ def test_rrf_and_alias_boost_promote_canonical_page():
     assert parse_json_front_matter(results[0].payload["text"])["title"] == "Planetary Industry"
 
 
+def test_vector_and_lexical_copies_fuse_by_stable_document_id():
+    chunk = _result(_text("Trading"))
+    chunk.payload.pop("id")
+    chunk.payload["text"] = chunk.payload["text"].replace(
+        "---\n", '---\ndocument_id: "mediawiki:131:1:chunk:0001"\n', 1
+    )
+
+    results = fuse_chunk_results(
+        "trading",
+        [chunk],
+        [(chunk.payload, 10.0)],
+        top_k=2,
+        page_limit=1,
+        max_chunks_per_page=2,
+    )
+
+    assert len(results) == 1
+
+
 def test_alias_boost_requires_a_contiguous_phrase():
     trading = _result(_text("Trading", aliases=["Station trading"]))
     skill_trading = _result(_text("Skill trading", aliases=["Skills trading"]))
