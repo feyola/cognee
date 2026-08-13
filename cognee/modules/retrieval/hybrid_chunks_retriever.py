@@ -32,6 +32,7 @@ RRF_CONSTANT = 60
 class _Candidate:
     identity: str
     payload: dict[str, Any]
+    result_id: Any = None
     vector_rank: int | None = None
     lexical_rank: int | None = None
 
@@ -57,7 +58,12 @@ def fuse_chunk_results(
         if not isinstance(payload, dict):
             continue
         identity = _candidate_identity(result, payload)
-        candidates[identity] = _Candidate(identity, payload, vector_rank=rank)
+        candidates[identity] = _Candidate(
+            identity,
+            payload,
+            result_id=getattr(result, "id", None) or payload.get("id"),
+            vector_rank=rank,
+        )
 
     for rank, value in enumerate(lexical_results or (), start=1):
         if not isinstance(value, tuple) or len(value) != 2:
@@ -70,7 +76,7 @@ def fuse_chunk_results(
         identity = _candidate_identity(payload, payload)
         candidate = candidates.get(identity)
         if candidate is None:
-            candidate = _Candidate(identity, payload)
+            candidate = _Candidate(identity, payload, result_id=payload.get("id"))
             candidates[identity] = candidate
         candidate.lexical_rank = rank
 
@@ -334,7 +340,10 @@ def _bound_results(
         used += separator + len(text)
         bounded.append(
             ScoredResult(
-                id=_result_uuid(candidate.identity),
+                # ``identity`` may be an ES document id used only to fuse
+                # backend copies. Citations must expose the real indexed
+                # DocumentChunk UUID selected from the backend.
+                id=_result_uuid(candidate.result_id or candidate.identity),
                 score=-relevance,
                 payload=payload,
             )
@@ -358,8 +367,10 @@ def _truncate_preserving_front_matter(text: str, limit: int) -> str | None:
     return normalized[:body_start] + normalized[body_start:limit]
 
 
-def _result_uuid(identity: str) -> UUID:
+def _result_uuid(identity: Any) -> UUID:
+    if isinstance(identity, UUID):
+        return identity
     try:
-        return UUID(identity)
+        return UUID(str(identity))
     except (TypeError, ValueError, AttributeError):
-        return uuid5(NAMESPACE_URL, identity)
+        return uuid5(NAMESPACE_URL, str(identity))

@@ -241,7 +241,27 @@ def test_supporting_snippet_focuses_on_late_answer_terms():
     )
 
     assert "loyalty points" in result
+    assert "Background mechanics" in result
     assert '"--- document_id:' not in result
+
+
+def test_supporting_snippet_retains_leading_identity_for_multihop_claim():
+    text = (
+        '---\ndocument_id: "mediawiki:3981:1:chunk:0002"\n'
+        'title: "Sin"\ncanonical_url: "https://wiki.eveuniversity.org/Sin"\n'
+        "chunk_index: 2\n---\n\n"
+        "# Sin | Sin | Gallente Federation | Black Ops | "
+        + "General ship description. " * 80
+        + "The Sin has a jump drive."
+    )
+
+    result = format_chunk_references(
+        [_payload(text=text, document_id="data-1", id="chunk-1")],
+        answer="The Sin uses Oxygen Isotopes for its jump drive.",
+    )
+
+    assert "Sin | Sin | Gallente Federation" in result
+    assert "The Sin has a jump drive" in result
 
 
 def test_structured_answer_snippet_centers_claim_entities_not_json_fields():

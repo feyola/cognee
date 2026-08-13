@@ -81,6 +81,7 @@ def test_vector_and_lexical_copies_fuse_by_stable_document_id():
     )
 
     assert len(results) == 1
+    assert results[0].id == chunk.id
 
 
 def test_alias_boost_requires_a_contiguous_phrase():

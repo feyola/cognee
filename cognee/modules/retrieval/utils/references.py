@@ -134,14 +134,30 @@ def _snippet(
             if match.group() in focus_terms:
                 candidates.add(max(0, match.start() - 80))
 
-        def score(offset: int) -> tuple[float, int, int]:
-            excerpt = collapsed[offset : offset + _SNIPPET_MAX_CHARS]
+        def score(
+            offset: int, window_chars: int = _SNIPPET_MAX_CHARS
+        ) -> tuple[float, int, int]:
+            excerpt = collapsed[offset : offset + window_chars]
             terms = set(re.findall(r"[a-z0-9]+", excerpt.lower()))
             covered = focus_terms & terms
             weighted = sum((focus_weights or {}).get(term, 1.0) for term in covered)
             return weighted, len(covered), -offset
 
         start = max(candidates, key=score)
+    if start > 240:
+        # Preserve the chunk's identifying lead (for example a ship/faction
+        # infobox row) alongside the answer-focused region. This makes
+        # multi-hop citations inspectable instead of silently dropping the
+        # first link in the chain when the strongest answer term is later.
+        head = collapsed[:240].rstrip()
+        tail_limit = _SNIPPET_MAX_CHARS - len(head) - 3
+        if focus_terms:
+            start = max(candidates, key=lambda offset: score(offset, tail_limit))
+        tail = collapsed[start : start + tail_limit].strip()
+        excerpt = f"{head} … {tail}"
+        if start + tail_limit < len(collapsed):
+            excerpt = excerpt[:-1].rstrip() + "…"
+        return excerpt
     excerpt = collapsed[start : start + _SNIPPET_MAX_CHARS]
     if start:
         excerpt = "…" + excerpt[1:]
