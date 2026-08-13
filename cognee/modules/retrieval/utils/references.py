@@ -38,7 +38,6 @@ EVIDENCE_HEADER = "Evidence:"
 # Maximum length of a rendered text snippet (characters) before truncation.
 _SNIPPET_MAX_CHARS = 1_200
 _SNIPPET_HEAD_CHARS = 480
-_SNIPPET_EXCERPT_GAP = 40
 
 # Hard upper bound on bullets regardless of the requested limit (3-5 range).
 _MAX_BULLETS = 5
@@ -134,8 +133,8 @@ def _snippet(
     if len(collapsed) <= _SNIPPET_MAX_CHARS:
         return collapsed
     start = 0
-    candidates = {0}
     if focus_terms:
+        candidates = {0}
         for match in re.finditer(r"[a-z0-9]+", collapsed.lower()):
             if match.group() in focus_terms:
                 candidates.add(max(0, match.start() - 80))
@@ -160,34 +159,6 @@ def _snippet(
             return weighted, distinctive_margin, len(covered), -offset
 
         start = max(candidates, key=score)
-    if focus_terms:
-        primary_terms = set(
-            re.findall(r"[a-z0-9]+", collapsed[start : start + _SNIPPET_MAX_CHARS].lower())
-        )
-        missing_terms = focus_terms - primary_terms
-        if missing_terms:
-            secondary_candidates = {
-                max(0, match.start() - 80)
-                for match in re.finditer(r"[a-z0-9]+", collapsed.lower())
-                if match.group() in missing_terms
-            }
-            if secondary_candidates:
-                primary_limit = (_SNIPPET_MAX_CHARS - _SNIPPET_EXCERPT_GAP) // 2
-                secondary_limit = _SNIPPET_MAX_CHARS - primary_limit - 3
-                primary_start = max(candidates, key=lambda offset: score(offset, primary_limit))
-                secondary_start = max(
-                    secondary_candidates,
-                    key=lambda offset: score(offset, secondary_limit),
-                )
-                if abs(primary_start - secondary_start) >= primary_limit // 2:
-                    first_start, first_limit, second_start, second_limit = (
-                        (primary_start, primary_limit, secondary_start, secondary_limit)
-                        if primary_start < secondary_start
-                        else (secondary_start, secondary_limit, primary_start, primary_limit)
-                    )
-                    first = collapsed[first_start : first_start + first_limit].strip()
-                    second = collapsed[second_start : second_start + second_limit].strip()
-                    return f"{first} … {second}"
     if start > _SNIPPET_HEAD_CHARS:
         # Preserve the chunk's identifying lead (for example a ship/faction
         # infobox row) alongside the answer-focused region. This makes

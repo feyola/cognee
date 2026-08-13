@@ -245,32 +245,6 @@ def test_supporting_snippet_focuses_on_late_answer_terms():
     assert '"--- document_id:' not in result
 
 
-def test_supporting_snippet_joins_separated_material_claims():
-    text = (
-        '---\ndocument_id: "mediawiki:10289:1:chunk:0004"\n'
-        'title: "Moving your items"\n'
-        'canonical_url: "https://wiki.eveuniversity.org/Moving_your_items"\n'
-        "chunk_index: 4\n---\n\n"
-        "Make sure you calculate the value of your items first to ensure you set the "
-        "right collateral. "
-        + "Campus hauling service details. " * 100
-        + "If the ship is destroyed, valuable cargo may be lost by the hauler."
-    )
-
-    result = format_chunk_references(
-        [_payload(text=text, document_id="data-1", id="chunk-1")],
-        answer=(
-            "Calculate the value and set the right collateral because valuable cargo "
-            "may be lost by the hauler."
-        ),
-    )
-
-    assert "calculate the value" in result
-    assert "right collateral" in result
-    assert "valuable cargo" in result
-    assert "hauler" in result
-
-
 def test_supporting_snippet_retains_leading_identity_for_multihop_claim():
     text = (
         '---\ndocument_id: "mediawiki:3981:1:chunk:0002"\n'
