@@ -148,6 +148,31 @@ def test_answer_body_overlap_selects_the_supporting_chunk_within_a_page():
     assert "loyalty points" in result.payload["text"]
 
 
+def test_page_reranking_prefers_summary_over_table_and_notes_chunks():
+    url = "https://wiki.eveuniversity.org/Sin"
+    table = _result(
+        _text("Sin", url=url, section=["Overview"], kind="table", body="Ship statistics."),
+        chunk_index=2,
+    )
+    notes = _result(
+        _text("Sin", url=url, section=["Notes"], body="Additional notes for Sin."),
+        chunk_index=9,
+    )
+    summary = _result(
+        _text("Sin", url=url, section=["Summary"], body="The Sin is a Gallente Black Ops."),
+        chunk_index=6,
+    )
+
+    [result] = fuse_chunk_results(
+        "What kind of fuel is used by Sin?",
+        [table, notes, summary],
+        [(table.payload, 10.0), (notes.payload, 9.0), (summary.payload, 8.0)],
+        top_k=1,
+    )
+
+    assert "The Sin is a Gallente Black Ops" in result.payload["text"]
+
+
 def test_primary_slots_are_canonical_page_diverse_then_retain_extra_chunks():
     trading_url = "https://wiki.eveuniversity.org/Trading"
     chunks = [

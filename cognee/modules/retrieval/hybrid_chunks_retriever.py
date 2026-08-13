@@ -254,6 +254,16 @@ def _hybrid_relevance(query: str, candidate: _Candidate) -> float:
     if isinstance(section_path, list):
         section_tokens = set(normalize_search_text(" ".join(map(str, section_path))).split())
         relevance += min(3, len(query_tokens & section_tokens)) * 0.015
+        normalized_sections = {normalize_search_text(str(value)) for value in section_path}
+        if "summary" in normalized_sections or "overview" in normalized_sections:
+            relevance += 0.018
+        if "notes" in normalized_sections or "notes and references" in normalized_sections:
+            relevance -= 0.02
+    chunk_index = metadata.get("chunk_index")
+    if isinstance(chunk_index, int) and not isinstance(chunk_index, bool) and chunk_index >= 0:
+        relevance += 0.012 / (chunk_index + 1)
+    if metadata.get("chunk_kind") == "table":
+        relevance -= 0.006
     answer_tokens = set(normalize_search_text(answer_body).split())
     # A tiny long-term overlap tie-breaker helps choose an answer-bearing chunk
     # within an already-ranked page without overriding title/section/status policy.
