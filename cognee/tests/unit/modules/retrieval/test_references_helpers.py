@@ -399,7 +399,8 @@ def test_answer_filtering_keeps_table_with_distinctive_claim_code():
         text=(
             '---\ntitle: "Wormhole attributes"\nsection_path: ["Connections"]\n'
             'chunk_kind: "table"\n'
-            'aliases: ["C12", "C9", "E587", "Thera to nullsec"]\n'
+            'aliases: ["Wormhole Information", "Wormhole Types", "C12", "C9", '
+            '"E587", "Thera to nullsec"]\n'
             '---\n\nA compact connection table.'
         ),
     )
@@ -414,7 +415,7 @@ def test_answer_filtering_keeps_table_with_distinctive_claim_code():
     )
 
     assert result.index("Wormhole attributes") < result.index("wormholes.md")
-    assert "Indexed search aliases: C12; C9; E587; Thera to nullsec" in result
+    assert "C12; C9; E587; Thera to nullsec" in result
 
 
 def test_answer_filtering_keeps_matching_status_warning():

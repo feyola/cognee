@@ -374,7 +374,7 @@ def format_chunk_references(
                     alias.strip()
                     for alias in raw_aliases
                     if isinstance(alias, str) and alias.strip()
-                ][:5]
+                ][:8]
                 if any(
                     set(_significant_term_weights(alias)) & answer_terms
                     for alias in aliases
