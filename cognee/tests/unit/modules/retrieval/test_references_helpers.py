@@ -311,6 +311,20 @@ def test_answer_filtering_drops_chunks_without_overlap():
     assert "other.pdf" not in result
 
 
+def test_answer_filtering_drops_weak_single_generic_term_overlap():
+    relevant = _payload(document_name="Sin", chunk_index=0, text="The Sin is Gallente.")
+    distractor = _payload(
+        document_name="Mission", chunk_index=1, text="Deliver activist fuel as cargo."
+    )
+
+    result = format_chunk_references(
+        [distractor, relevant], answer="The Sin uses Oxygen Isotopes as jump fuel."
+    )
+
+    assert "Sin" in result
+    assert "Mission" not in result
+
+
 def test_answer_filtering_empty_when_nothing_overlaps():
     """No candidate overlaps the answer -> Evidence omitted entirely."""
     unrelated = _payload(text="Penguins live in Antarctica.")

@@ -382,22 +382,38 @@ def format_chunk_references(
         score = 0
         if answer_terms is not None:
             chunk_terms = set(re.findall(r"[a-z0-9]+", body.lower()))
-            score = len(answer_terms & chunk_terms)
+            overlap_terms = answer_terms & chunk_terms
+            score = len(overlap_terms)
             if score == 0:
                 # No term from the answer appears in this chunk: it is almost
                 # certainly not a source of the answer.
                 continue
             section_path = metadata.get("section_path")
+            summary_section = False
             if isinstance(section_path, list):
                 sections = {str(value).strip().casefold() for value in section_path}
                 if "summary" in sections:
                     score += 3
+                    summary_section = True
                 elif "overview" in sections:
                     score += 1
                 if "notes" in sections or "notes and references" in sections:
                     score -= 3
             if metadata.get("chunk_kind") == "table":
                 score -= 2
+            title_terms = _significant_terms(document_name)
+            title_in_answer = bool(title_terms) and title_terms <= answer_terms
+            has_distinctive_overlap = any(
+                len(term) >= 7 or any(character.isdigit() for character in term)
+                for term in overlap_terms
+            )
+            if score <= 0 or (
+                len(overlap_terms) < 2
+                and not has_distinctive_overlap
+                and not title_in_answer
+                and not summary_section
+            ):
+                continue
 
         candidates.append(
             (
