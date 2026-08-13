@@ -17,6 +17,8 @@ from cognee.modules.retrieval.utils.chunk_metadata import canonical_page_key
 
 logger = get_logger("CompletionRetriever")
 
+DEFAULT_ANSWER_PAGE_LIMIT = 4
+
 CURRENTNESS_GUIDANCE = (
     "Retrieval policy: use active answer-bearing content. Status chunks are warnings, not "
     "answers. If facts conflict, prefer the most specific section whose heading matches the "
@@ -72,7 +74,11 @@ class CompletionRetriever(BaseRetriever):
             node_name=self.node_name,
             node_name_filter_operator=self.node_name_filter_operator,
             candidate_pool_size=self.candidate_pool_size,
-            page_limit=min(3, self.top_k),
+            # Broad questions can span more than three canonical pages (for
+            # example NPC-seeded BPOs, skillbooks, and command centers). Keep
+            # one slot for a supporting chunk at the usual top_k=5 while not
+            # allowing repeated chunks from one page to crowd out that breadth.
+            page_limit=min(DEFAULT_ANSWER_PAGE_LIMIT, self.top_k),
             max_chunks_per_page=self.max_chunks_per_page,
             max_context_chars=candidate_context_limit,
         )
