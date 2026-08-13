@@ -98,6 +98,24 @@ def _significant_term_weights(text: str) -> dict[str, float]:
     }
 
 
+def _answer_phrases(text: str) -> set[str]:
+    """Keep short answer phrases that can anchor a citation excerpt."""
+    tokens = re.findall(r"[a-z0-9]+", text.lower())
+    phrases: set[str] = set()
+    for size in (2, 3, 4):
+        for index in range(len(tokens) - size + 1):
+            group = tokens[index : index + size]
+            significant = [
+                token
+                for token in group
+                if (len(token) >= 3 or any(character.isdigit() for character in token))
+                and token not in _STOPWORDS
+            ]
+            if len(significant) >= 2:
+                phrases.add(" ".join(group))
+    return phrases
+
+
 def _clamp_limit(limit: int) -> int:
     """Clamp the requested bullet limit into the contracted 3-5 range."""
     if limit < _MIN_LIMIT:
@@ -127,6 +145,7 @@ def _snippet(
     text: str,
     focus_terms: Optional[Set[str]] = None,
     focus_weights: Optional[dict[str, float]] = None,
+    focus_phrases: Optional[Set[str]] = None,
 ) -> str:
     """Return a compact supporting excerpt, focused on answer terms when supplied."""
     collapsed = " ".join(text.split())
@@ -139,6 +158,9 @@ def _snippet(
             if match.group() in focus_terms:
                 candidates.add(max(0, match.start() - 80))
                 candidates.add(max(0, match.start() - _SNIPPET_MAX_CHARS // 3))
+        for phrase in focus_phrases or ():
+            for match in re.finditer(rf"\b{re.escape(phrase)}\b", collapsed.lower()):
+                candidates.add(max(0, match.start() - 120))
 
         def score(
             offset: int, window_chars: int = _SNIPPET_MAX_CHARS
@@ -147,6 +169,11 @@ def _snippet(
             terms = set(re.findall(r"[a-z0-9]+", excerpt.lower()))
             covered = focus_terms & terms
             weighted = sum((focus_weights or {}).get(term, 1.0) for term in covered)
+            phrase_score = sum(
+                len(phrase.split()) * 5
+                for phrase in focus_phrases or ()
+                if phrase in excerpt.lower()
+            )
             distinctive_margin = max(
                 (
                     min(match.start(), window_chars - match.end())
@@ -156,7 +183,7 @@ def _snippet(
                 ),
                 default=0,
             )
-            return weighted, distinctive_margin, len(covered), -offset
+            return weighted + phrase_score, distinctive_margin, len(covered), -offset
 
         start = max(candidates, key=score)
     if start > _SNIPPET_HEAD_CHARS:
@@ -331,9 +358,11 @@ def format_chunk_references(
 
     answer_terms: Optional[Set[str]] = None
     answer_term_weights: Optional[dict[str, float]] = None
+    answer_phrases: Optional[Set[str]] = None
     if answer is not None:
         answer_term_weights = _significant_term_weights(answer)
         answer_terms = set(answer_term_weights)
+        answer_phrases = _answer_phrases(answer)
         if not answer_terms:
             # Nothing to ground the citation in (e.g. "Yes."): omit Evidence
             # rather than presenting unverifiable retrieval order as provenance.
@@ -501,7 +530,7 @@ def format_chunk_references(
             else f"- chunk {number} of document {document_name}"
         )
         + _provenance_suffix(source_id, data_id, chunk_id, dataset_id, node_sets)
-        + f': "{_snippet(body, answer_terms, answer_term_weights)}"'
+        + f': "{_snippet(body, answer_terms, answer_term_weights, answer_phrases)}"'
         for (
             _,
             document_name,

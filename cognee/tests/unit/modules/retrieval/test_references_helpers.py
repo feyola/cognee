@@ -245,6 +245,29 @@ def test_supporting_snippet_focuses_on_late_answer_terms():
     assert '"--- document_id:' not in result
 
 
+def test_supporting_snippet_prefers_distinctive_answer_phrase():
+    text = (
+        '---\ndocument_id: "mediawiki:10289:1:chunk:0004"\n'
+        'title: "Moving your items"\n'
+        'canonical_url: "https://wiki.eveuniversity.org/Moving_your_items"\n'
+        "chunk_index: 4\n---\n\n"
+        + "Cargo routes, hauler time, reward, collateral, and risk. " * 35
+        + "Janice gives a Total Sell Value for the cargo. "
+        + "Your collateral should be at least this value."
+    )
+
+    result = format_chunk_references(
+        [_payload(text=text, document_id="data-1", id="chunk-1")],
+        answer=(
+            "Use Janice's Total Sell Value and set collateral to at least the cargo's "
+            "replacement value."
+        ),
+    )
+
+    assert "Total Sell Value" in result
+    assert "collateral should be at least this value" in result
+
+
 def test_supporting_snippet_retains_leading_identity_for_multihop_claim():
     text = (
         '---\ndocument_id: "mediawiki:3981:1:chunk:0002"\n'
