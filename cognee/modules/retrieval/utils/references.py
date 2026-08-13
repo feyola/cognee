@@ -366,6 +366,28 @@ def format_chunk_references(
             continue
         metadata, _body = split_json_front_matter(text)
         body = _answer_body(text)
+        evidence_body = body
+        if answer_terms is not None:
+            raw_aliases = metadata.get("aliases")
+            if isinstance(raw_aliases, list):
+                aliases = [
+                    alias.strip()
+                    for alias in raw_aliases
+                    if isinstance(alias, str) and alias.strip()
+                ][:5]
+                if any(
+                    set(_significant_term_weights(alias)) & answer_terms
+                    for alias in aliases
+                ):
+                    # Search aliases are part of the indexed chunk metadata and
+                    # can be the decisive retrieval evidence for terse table
+                    # rows. If one contributed, render the complete bounded
+                    # alias set instead of silently using metadata to answer
+                    # while hiding the other attributes of the indexed row.
+                    evidence_body = (
+                        f"[Indexed search aliases: {'; '.join(aliases)}] "
+                        f"{body}"
+                    )
         document_name = _clean_str(metadata.get("title")) or _clean_str(
             payload.get("document_name")
         )
@@ -395,7 +417,7 @@ def format_chunk_references(
 
         score = 0
         if answer_terms is not None:
-            chunk_terms = set(re.findall(r"[a-z0-9]+", body.lower()))
+            chunk_terms = set(re.findall(r"[a-z0-9]+", evidence_body.lower()))
             overlap_terms = answer_terms & chunk_terms
             score = sum(
                 (answer_term_weights or {}).get(term, 1.0) for term in overlap_terms
@@ -449,7 +471,7 @@ def format_chunk_references(
                 canonical_url,
                 source_index,
                 number,
-                body,
+                evidence_body,
                 source_id,
                 data_id,
                 chunk_id,
