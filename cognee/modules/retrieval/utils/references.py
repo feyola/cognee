@@ -164,15 +164,23 @@ def _snippet(
 
         def score(
             offset: int, window_chars: int = _SNIPPET_MAX_CHARS
-        ) -> tuple[float, int, int, int]:
+        ) -> tuple[float, int, int, int, int]:
             excerpt = collapsed[offset : offset + window_chars]
             terms = set(re.findall(r"[a-z0-9]+", excerpt.lower()))
             covered = focus_terms & terms
             weighted = sum((focus_weights or {}).get(term, 1.0) for term in covered)
             phrase_score = sum(
-                len(phrase.split()) * 5
+                len(phrase.split()) * 50
                 for phrase in focus_phrases or ()
                 if phrase in excerpt.lower()
+            )
+            phrase_margin = max(
+                (
+                    min(match.start(), window_chars - match.end())
+                    for phrase in focus_phrases or ()
+                    for match in re.finditer(rf"\b{re.escape(phrase)}\b", excerpt.lower())
+                ),
+                default=0,
             )
             distinctive_margin = max(
                 (
@@ -183,7 +191,13 @@ def _snippet(
                 ),
                 default=0,
             )
-            return weighted + phrase_score, distinctive_margin, len(covered), -offset
+            return (
+                weighted + phrase_score,
+                phrase_margin,
+                distinctive_margin,
+                len(covered),
+                -offset,
+            )
 
         start = max(candidates, key=score)
     if start > _SNIPPET_HEAD_CHARS:
