@@ -148,6 +148,12 @@ def _snippet(
                 and right.start() - left.end() <= 20
             ):
                 candidates.add(max(0, left.start() - _SNIPPET_MAX_CHARS // 2))
+        for left_index, left in enumerate(token_matches):
+            if left.group() not in focus_terms:
+                continue
+            for right in token_matches[left_index + 1 : left_index + 7]:
+                if right.group() in focus_terms:
+                    candidates.add(max(0, left.start() - _SNIPPET_MAX_CHARS // 2))
 
         def score(
             offset: int, window_chars: int = _SNIPPET_MAX_CHARS
@@ -172,7 +178,17 @@ def _snippet(
                 and right.start() - left.end() <= 20
                 for left, right in zip(excerpt_matches, excerpt_matches[1:])
             )
-            return weighted + nearby_pairs * 2, distinctive_margin, len(covered), -offset
+            short_range_pairs = sum(
+                left.group() in focus_terms and right.group() in focus_terms
+                for index, left in enumerate(excerpt_matches)
+                for right in excerpt_matches[index + 1 : index + 7]
+            )
+            return (
+                weighted + nearby_pairs * 2 + short_range_pairs,
+                distinctive_margin,
+                len(covered),
+                -offset,
+            )
 
         start = max(candidates, key=score)
     if focus_terms:
