@@ -132,3 +132,37 @@ async def test_api_code_query_rejects_non_code_search(api_search_mod):
             user=_make_user(),
             code_query={"operation": "explore"},
         )
+
+
+@pytest.mark.asyncio
+async def test_chunk_identity_endpoint_returns_only_live_vector_ids(monkeypatch):
+    import importlib
+
+    from cognee.api.v1.search.routers.get_search_router import ChunkIdentityPayloadDTO
+
+    router_module = importlib.import_module(
+        "cognee.api.v1.search.routers.get_search_router"
+    )
+
+    requested = [uuid4(), uuid4()]
+
+    class Vector:
+        async def retrieve(self, collection, ids):
+            assert collection == "DocumentChunk_text"
+            assert ids == [str(value) for value in requested]
+            return [types.SimpleNamespace(id=requested[0])]
+
+    async def fake_engine():
+        return types.SimpleNamespace(vector=Vector())
+
+    monkeypatch.setattr(router_module, "get_unified_engine", fake_engine)
+    router = router_module.get_search_router()
+    endpoint = next(
+        route.endpoint for route in router.routes if route.path == "/chunk-identities"
+    )
+
+    result = await endpoint(
+        ChunkIdentityPayloadDTO(chunk_ids=requested), _user=_make_user()
+    )
+
+    assert result == [requested[0]]

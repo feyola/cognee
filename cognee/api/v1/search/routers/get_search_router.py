@@ -12,6 +12,7 @@ from cognee.api.DTO import ErrorResponse, InDTO, OutDTO
 from cognee.exceptions import CogneeApiError
 from cognee.modules.search.operations import get_history
 from cognee.modules.search.types import SearchResult, SearchType
+from cognee.infrastructure.databases.unified import get_unified_engine
 from cognee.modules.users.methods import get_authenticated_user
 from cognee.modules.users.models import User
 from cognee.shared.usage_logger import log_usage
@@ -103,6 +104,10 @@ class SearchPayloadDTO(InDTO):
     )
 
 
+class ChunkIdentityPayloadDTO(InDTO):
+    chunk_ids: list[UUID] = Field(min_length=1, max_length=100)
+
+
 def get_search_router() -> APIRouter:
     router = APIRouter()
 
@@ -156,6 +161,22 @@ def get_search_router() -> APIRouter:
                     detail=str(error),
                 ).model_dump(),
             )
+
+    @router.post(
+        "/chunk-identities",
+        response_model=list[UUID],
+        responses={403: {"model": ErrorResponse}, 422: {"model": ErrorResponse}},
+    )
+    async def verify_chunk_identities(
+        payload: ChunkIdentityPayloadDTO,
+        _user: User = Depends(get_authenticated_user),
+    ):
+        """Return only requested UUIDs that exist in the live chunk index."""
+        unified = await get_unified_engine()
+        found = await unified.vector.retrieve(
+            "DocumentChunk_text", [str(chunk_id) for chunk_id in payload.chunk_ids]
+        )
+        return [item.id for item in found]
 
     @router.post(
         "",
