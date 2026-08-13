@@ -9,12 +9,16 @@ from pydantic import Field
 
 from cognee import __version__ as cognee_version
 from cognee.api.DTO import ErrorResponse, InDTO, OutDTO
+from cognee.context_global_variables import set_database_global_context_variables
 from cognee.exceptions import CogneeApiError
 from cognee.modules.search.operations import get_history
 from cognee.modules.search.types import SearchResult, SearchType
 from cognee.infrastructure.databases.unified import get_unified_engine
 from cognee.modules.users.methods import get_authenticated_user
 from cognee.modules.users.models import User
+from cognee.modules.users.permissions.methods.get_specific_user_permission_datasets import (
+    get_specific_user_permission_datasets,
+)
 from cognee.shared.usage_logger import log_usage
 from cognee.shared.utils import send_telemetry
 
@@ -105,6 +109,7 @@ class SearchPayloadDTO(InDTO):
 
 
 class ChunkIdentityPayloadDTO(InDTO):
+    dataset_id: UUID
     chunk_ids: list[UUID] = Field(min_length=1, max_length=100)
 
 
@@ -169,13 +174,18 @@ def get_search_router() -> APIRouter:
     )
     async def verify_chunk_identities(
         payload: ChunkIdentityPayloadDTO,
-        _user: User = Depends(get_authenticated_user),
+        user: User = Depends(get_authenticated_user),
     ):
-        """Return only requested UUIDs that exist in the live chunk index."""
-        unified = await get_unified_engine()
-        found = await unified.vector.retrieve(
-            "DocumentChunk_text", [str(chunk_id) for chunk_id in payload.chunk_ids]
+        """Return only requested UUIDs that exist in an authorized dataset index."""
+        datasets = await get_specific_user_permission_datasets(
+            user.id, "read", [payload.dataset_id]
         )
+        dataset = datasets[0]
+        async with set_database_global_context_variables(dataset.id, dataset.owner_id):
+            unified = await get_unified_engine()
+            found = await unified.vector.retrieve(
+                "DocumentChunk_text", [str(chunk_id) for chunk_id in payload.chunk_ids]
+            )
         return [item.id for item in found]
 
     @router.post(

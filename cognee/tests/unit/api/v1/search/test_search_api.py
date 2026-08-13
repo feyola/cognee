@@ -137,6 +137,7 @@ async def test_api_code_query_rejects_non_code_search(api_search_mod):
 @pytest.mark.asyncio
 async def test_chunk_identity_endpoint_returns_only_live_vector_ids(monkeypatch):
     import importlib
+    from contextlib import asynccontextmanager
 
     from cognee.api.v1.search.routers.get_search_router import ChunkIdentityPayloadDTO
 
@@ -145,6 +146,8 @@ async def test_chunk_identity_endpoint_returns_only_live_vector_ids(monkeypatch)
     )
 
     requested = [uuid4(), uuid4()]
+    dataset_id = uuid4()
+    owner_id = uuid4()
 
     class Vector:
         async def retrieve(self, collection, ids):
@@ -155,14 +158,31 @@ async def test_chunk_identity_endpoint_returns_only_live_vector_ids(monkeypatch)
     async def fake_engine():
         return types.SimpleNamespace(vector=Vector())
 
+    async def fake_permissions(user_id, permission, dataset_ids):
+        assert user_id == _make_user().id
+        assert permission == "read"
+        assert dataset_ids == [dataset_id]
+        return [types.SimpleNamespace(id=dataset_id, owner_id=owner_id)]
+
+    @asynccontextmanager
+    async def fake_context(selected_dataset_id, selected_owner_id):
+        assert selected_dataset_id == dataset_id
+        assert selected_owner_id == owner_id
+        yield
+
     monkeypatch.setattr(router_module, "get_unified_engine", fake_engine)
+    monkeypatch.setattr(
+        router_module, "get_specific_user_permission_datasets", fake_permissions
+    )
+    monkeypatch.setattr(router_module, "set_database_global_context_variables", fake_context)
     router = router_module.get_search_router()
     endpoint = next(
         route.endpoint for route in router.routes if route.path == "/chunk-identities"
     )
 
     result = await endpoint(
-        ChunkIdentityPayloadDTO(chunk_ids=requested), _user=_make_user()
+        ChunkIdentityPayloadDTO(dataset_id=dataset_id, chunk_ids=requested),
+        user=_make_user(),
     )
 
     assert result == [requested[0]]
