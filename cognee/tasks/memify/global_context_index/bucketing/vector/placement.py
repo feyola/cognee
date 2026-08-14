@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from typing import Any
 
 from cognee.infrastructure.databases.vector.exceptions import CollectionNotFoundError
@@ -16,7 +17,18 @@ from ..common import (
 
 MIN_NEIGHBOR_LIMIT = 50
 NEIGHBOR_LIMIT_BUCKET_MULTIPLIER = 2
-MAX_CONCURRENT_NEIGHBOR_SEARCHES = 32
+DEFAULT_MAX_CONCURRENT_NEIGHBOR_SEARCHES = 8
+
+
+def get_max_concurrent_neighbor_searches() -> int:
+    raw_value = os.getenv(
+        "GLOBAL_CONTEXT_MAX_CONCURRENT_NEIGHBOR_SEARCHES",
+        str(DEFAULT_MAX_CONCURRENT_NEIGHBOR_SEARCHES),
+    )
+    try:
+        return max(1, int(raw_value))
+    except ValueError:
+        return DEFAULT_MAX_CONCURRENT_NEIGHBOR_SEARCHES
 
 
 async def prefetch_nearest_neighbors(
@@ -43,7 +55,7 @@ async def prefetch_nearest_neighbors(
         MIN_NEIGHBOR_LIMIT,
         max_bucket_size * NEIGHBOR_LIMIT_BUCKET_MULTIPLIER,
     )
-    semaphore = asyncio.Semaphore(MAX_CONCURRENT_NEIGHBOR_SEARCHES)
+    semaphore = asyncio.Semaphore(get_max_concurrent_neighbor_searches())
 
     async def _search(item: SummaryNode) -> tuple[str, list]:
         async with semaphore:
