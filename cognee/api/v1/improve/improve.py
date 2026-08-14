@@ -1,5 +1,6 @@
 from uuid import UUID
 from typing import Union, Optional, List, Type, Any
+from collections.abc import Mapping
 
 try:
     from typing import Unpack
@@ -298,7 +299,14 @@ async def _build_global_context_index(
         bucketing_strategy="graph",
         max_bucket_size=4,
     )
-    if isinstance(result, PipelineRunErrored):
+    if isinstance(result, Mapping):
+        pipeline_results = result.values()
+    elif isinstance(result, (list, tuple, set)):
+        pipeline_results = result
+    else:
+        pipeline_results = (result,)
+
+    if any(isinstance(pipeline_result, PipelineRunErrored) for pipeline_result in pipeline_results):
         raise RuntimeError("global context index pipeline failed")
     logger.info("improve: global context index updated")
     return True
