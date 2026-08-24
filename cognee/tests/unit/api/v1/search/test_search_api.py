@@ -60,7 +60,7 @@ async def test_api_graph_search_passes_feedback_influence_to_search_function(
 
 
 @pytest.mark.asyncio
-async def test_api_graph_search_uses_updated_default_triplet_penalty(monkeypatch, api_search_mod):
+async def test_api_graph_search_omits_unspecified_triplet_penalty(monkeypatch, api_search_mod):
     user = _make_user()
     dataset = _make_dataset()
 
@@ -68,7 +68,7 @@ async def test_api_graph_search_uses_updated_default_triplet_penalty(monkeypatch
         return None
 
     async def dummy_search_function(**kwargs):
-        assert kwargs["triplet_distance_penalty"] == 6.5
+        assert kwargs["triplet_distance_penalty"] is None
         return ["ok"]
 
     monkeypatch.setattr(
@@ -132,3 +132,57 @@ async def test_api_code_query_rejects_non_code_search(api_search_mod):
             user=_make_user(),
             code_query={"operation": "explore"},
         )
+
+
+@pytest.mark.asyncio
+async def test_chunk_identity_endpoint_returns_only_live_vector_ids(monkeypatch):
+    import importlib
+    from contextlib import asynccontextmanager
+
+    from cognee.api.v1.search.routers.get_search_router import ChunkIdentityPayloadDTO
+
+    router_module = importlib.import_module(
+        "cognee.api.v1.search.routers.get_search_router"
+    )
+
+    requested = [uuid4(), uuid4()]
+    dataset_id = uuid4()
+    owner_id = uuid4()
+
+    class Vector:
+        async def retrieve(self, collection, ids):
+            assert collection == "DocumentChunk_text"
+            assert ids == [str(value) for value in requested]
+            return [types.SimpleNamespace(id=requested[0])]
+
+    async def fake_engine():
+        return types.SimpleNamespace(vector=Vector())
+
+    async def fake_permissions(user_id, permission, dataset_ids):
+        assert user_id == _make_user().id
+        assert permission == "read"
+        assert dataset_ids == [dataset_id]
+        return [types.SimpleNamespace(id=dataset_id, owner_id=owner_id)]
+
+    @asynccontextmanager
+    async def fake_context(selected_dataset_id, selected_owner_id):
+        assert selected_dataset_id == dataset_id
+        assert selected_owner_id == owner_id
+        yield
+
+    monkeypatch.setattr(router_module, "get_unified_engine", fake_engine)
+    monkeypatch.setattr(
+        router_module, "get_specific_user_permission_datasets", fake_permissions
+    )
+    monkeypatch.setattr(router_module, "set_database_global_context_variables", fake_context)
+    router = router_module.get_search_router()
+    endpoint = next(
+        route.endpoint for route in router.routes if route.path == "/chunk-identities"
+    )
+
+    result = await endpoint(
+        ChunkIdentityPayloadDTO(dataset_id=dataset_id, chunk_ids=requested),
+        user=_make_user(),
+    )
+
+    assert result == [requested[0]]

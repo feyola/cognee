@@ -13,6 +13,7 @@ from cognee.modules.pipelines.models import PipelineContext
 from cognee.tasks.storage.add_data_points import (
     add_data_points,
     InvalidDataPointsInAddDataPointsError,
+    _add_edges_with_endpoint_repair,
     _extract_embeddable_text_from_datapoint,
     _create_triplets_from_graph,
 )
@@ -53,6 +54,53 @@ class UnlabelablePoint(DataPoint):
     """Has neither `name` nor `index_fields` — the misuse case."""
 
     payload: str
+
+
+class _ForeignKeyViolation(RuntimeError):
+    sqlstate = "23503"
+
+
+@pytest.mark.asyncio
+async def test_edge_write_repairs_only_known_batch_endpoints_after_fk_race():
+    source = SimplePoint(text="source")
+    target = SimplePoint(text="target")
+    edges = [(str(source.id), str(target.id), "related_to", {})]
+    graph_engine = AsyncMock()
+    graph_engine.add_edges.side_effect = [_ForeignKeyViolation(), None]
+
+    await _add_edges_with_endpoint_repair(
+        graph_engine,
+        [source, target],
+        edges,
+        source_ref_key="source-ref",
+        pipeline_run_id="pipeline-run",
+    )
+
+    assert graph_engine.add_edges.await_count == 2
+    graph_engine.add_nodes.assert_awaited_once_with(
+        [source, target],
+        source_ref_key="source-ref",
+        pipeline_run_id="pipeline-run",
+    )
+
+
+@pytest.mark.asyncio
+async def test_edge_write_does_not_repair_an_unknown_endpoint():
+    source = SimplePoint(text="source")
+    edges = [(str(source.id), str(uuid4()), "related_to", {})]
+    graph_engine = AsyncMock()
+    graph_engine.add_edges.side_effect = _ForeignKeyViolation()
+
+    with pytest.raises(_ForeignKeyViolation):
+        await _add_edges_with_endpoint_repair(
+            graph_engine,
+            [source],
+            edges,
+            source_ref_key=None,
+            pipeline_run_id=None,
+        )
+
+    graph_engine.add_nodes.assert_not_awaited()
 
 
 def _make_unified_mock():

@@ -1,12 +1,27 @@
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 
+
 from cognee.modules.retrieval.graph_completion_cot_retriever import (
     GraphCompletionCotRetriever,
     _as_answer_text,
 )
 from cognee.modules.graph.cognee_graph.CogneeGraphElements import Edge
 from cognee.infrastructure.llm.LLMGateway import LLMGateway
+
+
+@pytest.fixture(autouse=True)
+def mock_cot_reasoning_batches():
+    """Keep CoT unit tests independent of configured external LLM credentials."""
+
+    async def mock_batch(prompts, *_args, **_kwargs):
+        return ["Follow-up question"] * len(prompts)
+
+    with patch(
+        "cognee.modules.retrieval.graph_completion_cot_retriever.batch_llm_completion",
+        side_effect=mock_batch,
+    ):
+        yield
 
 
 @pytest.fixture
@@ -442,6 +457,10 @@ async def test_get_completion_with_response_model(mock_edge):
             return_value="Resolved context",
         ),
         patch(
+            "cognee.modules.retrieval.graph_completion_retriever.generate_completion",
+            return_value=TestModel(answer="Test answer"),
+        ),
+        patch(
             "cognee.modules.retrieval.utils.completion.generate_completion",
             return_value=TestModel(answer="Test answer"),
         ),
@@ -490,6 +509,10 @@ async def test_get_completion_with_session_no_user_id(mock_edge):
         patch(
             "cognee.modules.retrieval.graph_completion_retriever.resolve_edges_to_text",
             return_value="Resolved context",
+        ),
+        patch(
+            "cognee.modules.retrieval.graph_completion_retriever.generate_completion",
+            return_value="Generated answer",
         ),
         patch(
             "cognee.modules.retrieval.utils.completion.generate_completion",

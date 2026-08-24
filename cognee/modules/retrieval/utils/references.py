@@ -19,9 +19,15 @@ when there is nothing usable, and never raise on backend failures.
 """
 
 import re
+from collections import Counter
 from typing import Any, List, Optional, Set, Tuple
 
+from cognee.context_global_variables import current_dataset_id
+from cognee.infrastructure.databases.vector.embeddings.compact_text import (
+    compact_embedding_text,
+)
 from cognee.shared.logging_utils import get_logger
+from cognee.modules.retrieval.utils.chunk_metadata import split_json_front_matter
 
 logger = get_logger("references")
 
@@ -30,7 +36,8 @@ logger = get_logger("references")
 EVIDENCE_HEADER = "Evidence:"
 
 # Maximum length of a rendered text snippet (characters) before truncation.
-_SNIPPET_MAX_CHARS = 160
+_SNIPPET_MAX_CHARS = 1_200
+_SNIPPET_HEAD_CHARS = 480
 
 # Hard upper bound on bullets regardless of the requested limit (3-5 range).
 _MAX_BULLETS = 5
@@ -41,6 +48,18 @@ _CHUNK_COLLECTION = "DocumentChunk_text"
 
 # How many vector candidates to fetch before answer-overlap filtering.
 _CANDIDATE_POOL = 10
+
+
+def _answer_body(text: str) -> str:
+    """Remove machine metadata so overlap and snippets represent supporting prose."""
+    _metadata, body = split_json_front_matter(text)
+    lines = body.splitlines()
+    while lines and (
+        not lines[0].strip()
+        or lines[0].lstrip().startswith("> extraction-solutions provenance:")
+    ):
+        lines.pop(0)
+    return "\n".join(lines).strip()
 
 # Common English words excluded from answer/chunk term overlap scoring.
 _STOPWORDS = frozenset(
@@ -53,8 +72,48 @@ _STOPWORDS = frozenset(
     their theirs them then there these they this those through to too under
     until up very was we were what when where which while who whom why will
     with you your yours
+    nodes edges source target relationship description notes id type name
     """.split()
 )
+
+
+def _significant_term_weights(text: str) -> dict[str, float]:
+    """Weight claim terms so entity evidence beats response-format boilerplate."""
+    tokens = [
+        token
+        for token in re.findall(r"[a-z0-9]+", text.lower())
+        if (len(token) >= 3 or any(character.isdigit() for character in token))
+        and token not in _STOPWORDS
+    ]
+    counts = Counter(tokens)
+    return {
+        token: 1.0
+        + min(count, 5)
+        + min(len(token), 12) / 12
+        # Alphanumeric codes and numeric values (E587, 7.5, etc.) are usually
+        # the decisive part of a claim. Make a window containing them beat a
+        # nearby paragraph with several generic overlapping nouns.
+        + (8.0 if any(character.isdigit() for character in token) else 0.0)
+        for token, count in counts.items()
+    }
+
+
+def _answer_phrases(text: str) -> set[str]:
+    """Keep short answer phrases that can anchor a citation excerpt."""
+    tokens = re.findall(r"[a-z0-9]+", text.lower())
+    phrases: set[str] = set()
+    for size in (2, 3, 4):
+        for index in range(len(tokens) - size + 1):
+            group = tokens[index : index + size]
+            significant = [
+                token
+                for token in group
+                if (len(token) >= 3 or any(character.isdigit() for character in token))
+                and token not in _STOPWORDS
+            ]
+            if len(significant) >= 2:
+                phrases.add(" ".join(group))
+    return phrases
 
 
 def _clamp_limit(limit: int) -> int:
@@ -82,12 +141,85 @@ def _clean_str(value: Any) -> Optional[str]:
     return stripped or None
 
 
-def _snippet(text: str) -> str:
-    """Collapse whitespace and truncate text into a short snippet."""
+def _snippet(
+    text: str,
+    focus_terms: Optional[Set[str]] = None,
+    focus_weights: Optional[dict[str, float]] = None,
+    focus_phrases: Optional[Set[str]] = None,
+) -> str:
+    """Return a compact supporting excerpt, focused on answer terms when supplied."""
     collapsed = " ".join(text.split())
     if len(collapsed) <= _SNIPPET_MAX_CHARS:
         return collapsed
-    return collapsed[: _SNIPPET_MAX_CHARS - 1].rstrip() + "…"
+    start = 0
+    if focus_terms:
+        candidates = {0}
+        for match in re.finditer(r"[a-z0-9]+", collapsed.lower()):
+            if match.group() in focus_terms:
+                candidates.add(max(0, match.start() - 80))
+                candidates.add(max(0, match.start() - _SNIPPET_MAX_CHARS // 3))
+        for phrase in focus_phrases or ():
+            for match in re.finditer(rf"\b{re.escape(phrase)}\b", collapsed.lower()):
+                candidates.add(max(0, match.start() - 120))
+
+        def score(
+            offset: int, window_chars: int = _SNIPPET_MAX_CHARS
+        ) -> tuple[float, int, int, int, int]:
+            excerpt = collapsed[offset : offset + window_chars]
+            terms = set(re.findall(r"[a-z0-9]+", excerpt.lower()))
+            covered = focus_terms & terms
+            weighted = sum((focus_weights or {}).get(term, 1.0) for term in covered)
+            phrase_score = sum(
+                len(phrase.split()) * 50
+                for phrase in focus_phrases or ()
+                if phrase in excerpt.lower()
+            )
+            phrase_margin = max(
+                (
+                    min(match.start(), window_chars - match.end())
+                    for phrase in focus_phrases or ()
+                    for match in re.finditer(rf"\b{re.escape(phrase)}\b", excerpt.lower())
+                ),
+                default=0,
+            )
+            distinctive_margin = max(
+                (
+                    min(match.start(), window_chars - match.end())
+                    for match in re.finditer(r"[a-z0-9]+", excerpt.lower())
+                    if match.group() in covered
+                    and any(character.isdigit() for character in match.group())
+                ),
+                default=0,
+            )
+            return (
+                weighted + phrase_score,
+                phrase_margin,
+                distinctive_margin,
+                len(covered),
+                -offset,
+            )
+
+        start = max(candidates, key=score)
+    if start > _SNIPPET_HEAD_CHARS:
+        # Preserve the chunk's identifying lead (for example a ship/faction
+        # infobox row) alongside the answer-focused region. This makes
+        # multi-hop citations inspectable instead of silently dropping the
+        # first link in the chain when the strongest answer term is later.
+        head = collapsed[:_SNIPPET_HEAD_CHARS].rstrip()
+        tail_limit = _SNIPPET_MAX_CHARS - len(head) - 3
+        if focus_terms:
+            start = max(candidates, key=lambda offset: score(offset, tail_limit))
+        tail = collapsed[start : start + tail_limit].strip()
+        excerpt = f"{head} … {tail}"
+        if start + tail_limit < len(collapsed):
+            excerpt = excerpt[:-1].rstrip() + "…"
+        return excerpt
+    excerpt = collapsed[start : start + _SNIPPET_MAX_CHARS]
+    if start:
+        excerpt = "…" + excerpt[1:]
+    if start + _SNIPPET_MAX_CHARS < len(collapsed):
+        excerpt = excerpt[:-1].rstrip() + "…"
+    return excerpt
 
 
 def _chunk_number(payload: dict) -> Optional[int]:
@@ -133,19 +265,49 @@ def _get_payload(obj: Any) -> Optional[dict]:
     return None
 
 
-def _provenance_suffix(data_id: Optional[str], chunk_id: Optional[str]) -> str:
-    """Render a '(data_id: …, chunk_id: …)' annotation for whichever ids exist.
+def _provenance_suffix(
+    source_id: Optional[str],
+    data_id: Optional[str],
+    chunk_id: Optional[str],
+    dataset_id: Optional[str],
+    node_sets: tuple[str, ...],
+) -> str:
+    """Render source, ingested-data, and internal-chunk identities when available.
 
     Lets a reader map the citation back to the ingested data item and the exact
     cited chunk, instead of only a (possibly auto-generated) document name and a
     positional chunk number.
     """
     parts = []
+    if source_id:
+        parts.append(f"source_id: {source_id}")
     if data_id:
         parts.append(f"data_id: {data_id}")
     if chunk_id:
         parts.append(f"chunk_id: {chunk_id}")
+    if dataset_id:
+        parts.append(f"dataset_id: {dataset_id}")
+    if node_sets:
+        parts.append(f"node_sets: {'|'.join(node_sets)}")
     return f" ({', '.join(parts)})" if parts else ""
+
+
+def _dataset_provenance(payload: dict) -> tuple[Optional[str], tuple[str, ...]]:
+    """Resolve the request dataset and exact node-set memberships for a chunk."""
+    dataset_id = _clean_str(payload.get("dataset_id"))
+    if dataset_id is None:
+        active_dataset_id = current_dataset_id.get()
+        if active_dataset_id is not None:
+            dataset_id = str(active_dataset_id)
+
+    raw_node_sets = payload.get("belongs_to_set")
+    if isinstance(raw_node_sets, str):
+        node_sets = (raw_node_sets.strip(),) if raw_node_sets.strip() else ()
+    elif isinstance(raw_node_sets, (list, tuple, set)):
+        node_sets = tuple(sorted({str(value).strip() for value in raw_node_sets if str(value).strip()}))
+    else:
+        node_sets = ()
+    return dataset_id, node_sets
 
 
 def _chunk_id(obj: Any, payload: dict) -> Optional[str]:
@@ -209,15 +371,33 @@ def format_chunk_references(
         return ""
 
     answer_terms: Optional[Set[str]] = None
+    answer_term_weights: Optional[dict[str, float]] = None
+    answer_phrases: Optional[Set[str]] = None
     if answer is not None:
-        answer_terms = _significant_terms(answer)
+        answer_term_weights = _significant_term_weights(answer)
+        answer_terms = set(answer_term_weights)
+        answer_phrases = _answer_phrases(answer)
         if not answer_terms:
             # Nothing to ground the citation in (e.g. "Yes."): omit Evidence
             # rather than presenting unverifiable retrieval order as provenance.
             return ""
 
-    # (overlap_score, document_name, number, text, data_id, chunk_id) per candidate.
-    candidates: List[Tuple[int, str, int, str, Optional[str], Optional[str]]] = []
+    # (overlap, name, URL, source index, fallback number, body, provenance ids).
+    candidates: List[
+        Tuple[
+            float,
+            str,
+            Optional[str],
+            Optional[int],
+            int,
+            str,
+            Optional[str],
+            Optional[str],
+            Optional[str],
+            Optional[str],
+            tuple[str, ...],
+        ]
+    ] = []
     seen: set = set()
 
     for obj in iterator:
@@ -225,20 +405,32 @@ def format_chunk_references(
         if payload is None:
             continue
 
-        document_name = _clean_str(payload.get("document_name"))
-        number = _chunk_number(payload)
         text = _clean_str(payload.get("text"))
+        if text is None:
+            continue
+        metadata, _body = split_json_front_matter(text)
+        body = _answer_body(text)
+        document_name = _clean_str(metadata.get("title")) or _clean_str(
+            payload.get("document_name")
+        )
+        canonical_url = _clean_str(metadata.get("canonical_url"))
+        source_index = metadata.get("chunk_index")
+        if isinstance(source_index, bool) or not isinstance(source_index, int) or source_index < 0:
+            source_index = None
+        number = _chunk_number(payload) or _chunk_number(metadata)
 
         # Document name and a chunk number are both required to ground the
         # citation; text is required for a meaningful snippet.
-        if document_name is None or number is None or text is None:
+        if document_name is None or number is None or not body:
             continue
 
         chunk_id = _chunk_id(obj, payload)
         # document_id == the ingested Data item's id (cognify sets
         # Document.id = data.id), i.e. the dataId a caller needs to map a
         # citation back to the document they ingested.
+        source_id = _clean_str(metadata.get("document_id"))
         data_id = _clean_str(payload.get("document_id"))
+        dataset_id, node_sets = _dataset_provenance(payload)
 
         dedup_key = chunk_id or f"{document_name}#{number}"
         if dedup_key in seen:
@@ -247,14 +439,72 @@ def format_chunk_references(
 
         score = 0
         if answer_terms is not None:
-            chunk_terms = set(re.findall(r"[a-z0-9]+", text.lower()))
-            score = len(answer_terms & chunk_terms)
+            # Search aliases may select a page, but only answer-bearing body
+            # text can support a factual citation.  Treating a flat alias bag
+            # as evidence can manufacture relations that the source never
+            # states (for example co-located wormhole codes/classes).
+            chunk_terms = set(re.findall(r"[a-z0-9]+", body.lower()))
+            overlap_terms = answer_terms & chunk_terms
+            score = sum(
+                (answer_term_weights or {}).get(term, 1.0) for term in overlap_terms
+            )
             if score == 0:
                 # No term from the answer appears in this chunk: it is almost
                 # certainly not a source of the answer.
                 continue
+            section_path = metadata.get("section_path")
+            summary_section = False
+            if isinstance(section_path, list):
+                sections = {str(value).strip().casefold() for value in section_path}
+                if "summary" in sections:
+                    score += 3
+                    summary_section = True
+                elif "overview" in sections:
+                    score += 1
+                if "notes" in sections or "notes and references" in sections:
+                    score -= 3
+            if metadata.get("chunk_kind") == "table":
+                if not any(
+                    any(character.isdigit() for character in term)
+                    for term in overlap_terms
+                ):
+                    score -= 2
+            if metadata.get("chunk_kind") == "status" and overlap_terms & {
+                "outdated",
+                "historical",
+                "excluded",
+                "warning",
+            }:
+                score += 4
+            title_terms = _significant_terms(document_name)
+            title_in_answer = bool(title_terms) and title_terms <= answer_terms
+            has_distinctive_overlap = any(
+                len(term) >= 7 or any(character.isdigit() for character in term)
+                for term in overlap_terms
+            )
+            if score <= 0 or (
+                len(overlap_terms) < 2
+                and not has_distinctive_overlap
+                and not title_in_answer
+                and not summary_section
+            ):
+                continue
 
-        candidates.append((score, document_name, number, text, data_id, chunk_id))
+        candidates.append(
+            (
+                score,
+                document_name,
+                canonical_url,
+                source_index,
+                number,
+                body,
+                source_id,
+                data_id,
+                chunk_id,
+                dataset_id,
+                node_sets,
+            )
+        )
 
     if not candidates:
         return ""
@@ -265,9 +515,31 @@ def format_chunk_references(
 
     max_bullets = _clamp_limit(limit)
     bullets = [
-        f"- chunk {number} of document {document_name}"
-        f'{_provenance_suffix(data_id, chunk_id)}: "{_snippet(text)}"'
-        for _, document_name, number, text, data_id, chunk_id in candidates[:max_bullets]
+        (
+            f"- {document_name}: {canonical_url} "
+            + (
+                f"(source chunk {source_index:04d})"
+                if source_index is not None
+                else f"(chunk {number})"
+            )
+            if canonical_url
+            else f"- chunk {number} of document {document_name}"
+        )
+        + _provenance_suffix(source_id, data_id, chunk_id, dataset_id, node_sets)
+        + f': "{_snippet(body, answer_terms, answer_term_weights, answer_phrases)}"'
+        for (
+            _,
+            document_name,
+            canonical_url,
+            source_index,
+            number,
+            body,
+            source_id,
+            data_id,
+            chunk_id,
+            dataset_id,
+            node_sets,
+        ) in candidates[:max_bullets]
     ]
 
     return EVIDENCE_HEADER + "\n" + "\n".join(bullets)
@@ -307,7 +579,7 @@ async def build_answer_grounded_chunk_references(
     try:
         found_chunks = await vector_engine.search(
             _CHUNK_COLLECTION,
-            cleaned_answer,
+            compact_embedding_text(cleaned_answer),
             limit=_CANDIDATE_POOL,
             include_payload=True,
         )

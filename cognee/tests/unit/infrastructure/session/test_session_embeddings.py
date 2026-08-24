@@ -212,6 +212,34 @@ class TestSessionQaVectorHelpers:
         assert indexed[0].belongs_to_set == [session_scope_tag("u1", "s1")]
 
     @pytest.mark.asyncio
+    async def test_index_session_qa_compacts_oversized_structured_answer(self, monkeypatch):
+        indexed = []
+
+        async def fake_index_data_points(points):
+            indexed.extend(points)
+
+        index_module = importlib.import_module("cognee.tasks.storage.index_data_points")
+        monkeypatch.setattr(index_module, "index_data_points", fake_index_data_points)
+        answer = (
+            '{"nodes":[{"name":"Mining yield"}],"edges":['
+            '{"description":"'
+            + "Background mechanics. " * 600
+            + '"},{"description":"Crystal choice affects mining yield."}]}'
+        )
+
+        await index_session_qa(
+            user_id="u1",
+            session_id="s1",
+            qa_id=str(uuid4()),
+            question="Which skills determine mining yield?",
+            answer=answer,
+        )
+
+        assert len(indexed[0].text) <= 8_001
+        assert "Crystal choice affects mining yield" in indexed[0].text
+        assert '"nodes"' not in indexed[0].text
+
+    @pytest.mark.asyncio
     async def test_search_session_qa_ids_uses_vector_engine_scope(self, monkeypatch):
         result_id = uuid4()
         vector_engine = SimpleNamespace()
@@ -329,8 +357,12 @@ class TestRankerRelevance:
 
     def test_stored_embeddings_do_not_affect_ranking(self):
         ranker = DeterministicRanker()
-        aligned = _entry("rules", "same words", embedding=[1.0, 0.0])
-        misaligned = _entry("rules", "same words", embedding=[0.0, 1.0])
+        # Pin one timestamp for both entries: score() has a recency term, so
+        # per-entry utcnow() stamps make the scores differ by an ulp whenever
+        # the two _entry() calls land a few milliseconds apart.
+        created_at = datetime.utcnow().isoformat()
+        aligned = _entry("rules", "same words", embedding=[1.0, 0.0], created_at=created_at)
+        misaligned = _entry("rules", "same words", embedding=[0.0, 1.0], created_at=created_at)
 
         assert ranker.score(aligned, "same words") == ranker.score(misaligned, "same words")
 

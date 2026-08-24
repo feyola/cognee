@@ -1,3 +1,4 @@
+import asyncio
 from importlib import import_module
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -598,6 +599,71 @@ async def test_update_global_context_index_first_build_creates_one_bucket_per_su
     }
     _assert_add_data_points_used_context(add_data_points_mock, ctx)
     unified_engine.graph.add_nodes.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_vector_neighbor_prefetch_bounds_result_window_and_concurrency(monkeypatch):
+    from cognee.tasks.memify.global_context_index.bucketing.vector.placement import (
+        prefetch_nearest_neighbors,
+    )
+
+    monkeypatch.setenv("GLOBAL_CONTEXT_MAX_CONCURRENT_NEIGHBOR_SEARCHES", "8")
+    active = 0
+    max_active = 0
+    observed_limits = []
+
+    async def search(collection_name, query_text, limit=None, include_payload=False):
+        nonlocal active, max_active
+        assert collection_name == "TextSummary"
+        assert include_payload is False
+        active += 1
+        max_active = max(max_active, active)
+        observed_limits.append(limit)
+        await asyncio.sleep(0.001)
+        active -= 1
+        return []
+
+    items = [_summary_node(f"summary-{index}") for index in range(96)]
+    result = await prefetch_nearest_neighbors(
+        items,
+        SimpleNamespace(search=search),
+        "TextSummary",
+        max_bucket_size=20,
+    )
+
+    assert set(result) == {item.id for item in items}
+    assert set(observed_limits) == {50}
+    assert max_active == 8
+
+
+@pytest.mark.asyncio
+async def test_vector_neighbor_prefetch_scales_window_with_bucket_size():
+    from cognee.tasks.memify.global_context_index.bucketing.vector.placement import (
+        prefetch_nearest_neighbors,
+    )
+
+    search = AsyncMock(return_value=[])
+    await prefetch_nearest_neighbors(
+        [_summary_node("summary")],
+        SimpleNamespace(search=search),
+        "TextSummary",
+        max_bucket_size=40,
+    )
+
+    assert search.await_args.kwargs["limit"] == 80
+
+
+def test_vector_neighbor_prefetch_concurrency_falls_back_for_invalid_env(monkeypatch):
+    from cognee.tasks.memify.global_context_index.bucketing.vector.placement import (
+        DEFAULT_MAX_CONCURRENT_NEIGHBOR_SEARCHES,
+        get_max_concurrent_neighbor_searches,
+    )
+
+    monkeypatch.setenv("GLOBAL_CONTEXT_MAX_CONCURRENT_NEIGHBOR_SEARCHES", "invalid")
+    assert get_max_concurrent_neighbor_searches() == DEFAULT_MAX_CONCURRENT_NEIGHBOR_SEARCHES
+
+    monkeypatch.setenv("GLOBAL_CONTEXT_MAX_CONCURRENT_NEIGHBOR_SEARCHES", "0")
+    assert get_max_concurrent_neighbor_searches() == 1
 
 
 @pytest.mark.asyncio

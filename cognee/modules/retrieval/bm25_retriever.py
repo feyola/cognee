@@ -22,6 +22,8 @@ class BM25ChunksRetriever(LexicalRetriever):
         stop_words: Optional[list[str]] = None,
         k1: float = 1.5,
         b: float = 0.75,
+        node_name: Optional[list[str]] = None,
+        node_name_filter_operator: str = "OR",
     ):
         """
         Parameters
@@ -51,7 +53,12 @@ class BM25ChunksRetriever(LexicalRetriever):
         self._stats_built = False
 
         super().__init__(
-            tokenizer=self._tokenizer, scorer=self._scorer, top_k=top_k, with_scores=with_scores
+            tokenizer=self._tokenizer,
+            scorer=self._scorer,
+            top_k=top_k,
+            with_scores=with_scores,
+            node_name=node_name,
+            node_name_filter_operator=node_name_filter_operator,
         )
 
     def _tokenizer(self, text: str) -> list[str]:

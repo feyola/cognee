@@ -119,3 +119,43 @@ async def test_no_match_query_returns_zero_scored_chunks():
     # LexicalRetriever still returns top_k payloads for a no-match query; all score 0.0.
     assert len(results) == 2
     assert all(score == 0.0 for _, score in results)
+
+
+@pytest.mark.asyncio
+async def test_node_set_filter_excludes_other_scopes_before_ranking():
+    nodes = [
+        (
+            "target",
+            {
+                "id": "target",
+                "type": "DocumentChunk",
+                "text": "hauling collateral route",
+                "belongs_to_set": ["site:candidate", "view:current"],
+            },
+        ),
+        (
+            "other",
+            {
+                "id": "other",
+                "type": "DocumentChunk",
+                "text": "hauling collateral route route route",
+                "belongs_to_set": ["site:other", "view:current"],
+            },
+        ),
+    ]
+    engine = AsyncMock()
+    engine.get_filtered_graph_data = AsyncMock(return_value=(nodes, {}))
+    retriever = BM25ChunksRetriever(
+        top_k=5,
+        with_scores=True,
+        node_name=["site:candidate", "view:current"],
+        node_name_filter_operator="AND",
+    )
+
+    with patch(
+        "cognee.modules.retrieval.lexical_retriever.get_graph_engine",
+        AsyncMock(return_value=engine),
+    ):
+        results = await retriever.get_retrieved_objects("hauling route")
+
+    assert [payload["id"] for payload, _score in results] == ["target"]

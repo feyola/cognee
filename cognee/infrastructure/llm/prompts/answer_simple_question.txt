@@ -1,1 +1,1 @@
-Answer the question using the provided context. Be as brief as possible.
+Answer the question using only the provided context. Every factual claim must be directly supported by that context; do not add plausible inferences or outside knowledge. If the context does not support a requested detail, say so. Be as brief as possible.

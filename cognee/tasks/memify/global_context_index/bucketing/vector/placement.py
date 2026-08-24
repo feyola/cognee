@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from typing import Any
 
 from cognee.infrastructure.databases.vector.exceptions import CollectionNotFoundError
@@ -14,33 +15,59 @@ from ..common import (
 )
 
 
+MIN_NEIGHBOR_LIMIT = 50
+NEIGHBOR_LIMIT_BUCKET_MULTIPLIER = 2
+DEFAULT_MAX_CONCURRENT_NEIGHBOR_SEARCHES = 8
+
+
+def get_max_concurrent_neighbor_searches() -> int:
+    raw_value = os.getenv(
+        "GLOBAL_CONTEXT_MAX_CONCURRENT_NEIGHBOR_SEARCHES",
+        str(DEFAULT_MAX_CONCURRENT_NEIGHBOR_SEARCHES),
+    )
+    try:
+        return max(1, int(raw_value))
+    except ValueError:
+        return DEFAULT_MAX_CONCURRENT_NEIGHBOR_SEARCHES
+
+
 async def prefetch_nearest_neighbors(
     items: list[SummaryNode],
-    placed_child_count: int,
     vector_engine: Any,
     collection_name: str,
+    max_bucket_size: int,
 ) -> dict[str, list]:
     """
     Concurrently fetch each item's nearest neighbors from the source
-    collection. Vector store contents are stable during a sweep iteration,
-    so the cached results remain valid for the placement loop.
+    collection. The result window is bounded by the amount of evidence needed
+    to fill and score one bucket rather than by corpus size. Vector store
+    contents are stable during a sweep iteration, so the cached results remain
+    valid for the placement loop.
+
+    Search concurrency is also bounded. Creating one coroutine per item is
+    cheap, but allowing every coroutine to issue an embedding and vector query
+    at once causes full-corpus builds to fan out tens of thousands of requests.
     """
     if not items:
         return {}
 
-    in_scope_count = placed_child_count + len(items)
-    limit = max(50, in_scope_count * 2)
+    limit = max(
+        MIN_NEIGHBOR_LIMIT,
+        max_bucket_size * NEIGHBOR_LIMIT_BUCKET_MULTIPLIER,
+    )
+    semaphore = asyncio.Semaphore(get_max_concurrent_neighbor_searches())
 
     async def _search(item: SummaryNode) -> tuple[str, list]:
-        try:
-            results = await vector_engine.search(
-                collection_name,
-                item.text,
-                limit=limit,
-                include_payload=False,
-            )
-        except CollectionNotFoundError:
-            results = []
+        async with semaphore:
+            try:
+                results = await vector_engine.search(
+                    collection_name,
+                    item.text,
+                    limit=limit,
+                    include_payload=False,
+                )
+            except CollectionNotFoundError:
+                results = []
         return item.id, results
 
     pairs = await asyncio.gather(*(_search(item) for item in items))
@@ -139,13 +166,14 @@ async def assign_items_to_buckets(
     for regeneration so its summary refreshes.
     """
     buckets_by_id = {bucket.id: bucket for bucket in existing_buckets}
-    placed_child_count = sum(len(bucket.child_ids) for bucket in existing_buckets)
-
     needs_placement = [item for item in items if not item.global_context_bucket_id]
     items_with_parent = [item for item in items if item.global_context_bucket_id]
 
     nearest_by_id = await prefetch_nearest_neighbors(
-        needs_placement, placed_child_count, vector_engine, source_collection
+        needs_placement,
+        vector_engine,
+        source_collection,
+        max_bucket_size,
     )
 
     buckets_to_persist: dict[str, SummaryNode] = {}
@@ -193,7 +221,10 @@ async def create_buckets_for_level(
         return {}, []
 
     nearest_by_id = await prefetch_nearest_neighbors(
-        items, len(items), vector_engine, source_collection
+        items,
+        vector_engine,
+        source_collection,
+        max_bucket_size,
     )
 
     item_by_id = {item.id: item for item in items}

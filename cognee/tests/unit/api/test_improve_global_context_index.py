@@ -136,6 +136,76 @@ async def test_improve_skips_global_context_index_in_background(monkeypatch):
     global_context_mock.assert_not_awaited()
 
 
+@pytest.mark.asyncio
+async def test_improve_propagates_global_context_index_failure(monkeypatch):
+    import cognee.shared.utils as shared_utils
+
+    improve_module = import_module("cognee.api.v1.improve.improve")
+    serve_state = import_module("cognee.api.v1.serve.state")
+    memify_module = import_module("cognee.modules.memify")
+    pipeline_module = import_module("cognee.memify_pipelines.global_context_index")
+    monkeypatch.setattr(shared_utils, "send_telemetry", lambda *args, **kwargs: None)
+    monkeypatch.setattr(serve_state, "get_remote_client", lambda: None)
+    monkeypatch.setattr(improve_module, "new_span", lambda _: DummySpan())
+    monkeypatch.setattr(memify_module, "memify", AsyncMock(return_value={"status": "ok"}))
+    global_context_mock = AsyncMock(side_effect=RuntimeError("embedding rejected"))
+    monkeypatch.setattr(pipeline_module, "global_context_index_pipeline", global_context_mock)
+    resolved = SimpleNamespace(id=uuid4(), name="docs")
+    monkeypatch.setattr(
+        improve_module,
+        "resolve_authorized_user_datasets",
+        AsyncMock(side_effect=lambda dataset, user: (user, [resolved])),
+    )
+
+    with pytest.raises(RuntimeError, match="embedding rejected"):
+        await improve_module.improve(
+            dataset="docs",
+            user=SimpleNamespace(id="user-id"),
+            build_global_context_index=True,
+        )
+
+    global_context_mock.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_improve_rejects_errored_global_context_result_mapping(monkeypatch):
+    import cognee.shared.utils as shared_utils
+    from cognee.modules.pipelines.models import PipelineRunErrored
+
+    improve_module = import_module("cognee.api.v1.improve.improve")
+    serve_state = import_module("cognee.api.v1.serve.state")
+    memify_module = import_module("cognee.modules.memify")
+    pipeline_module = import_module("cognee.memify_pipelines.global_context_index")
+    monkeypatch.setattr(shared_utils, "send_telemetry", lambda *args, **kwargs: None)
+    monkeypatch.setattr(serve_state, "get_remote_client", lambda: None)
+    monkeypatch.setattr(improve_module, "new_span", lambda _: DummySpan())
+    monkeypatch.setattr(memify_module, "memify", AsyncMock(return_value={"status": "ok"}))
+
+    dataset_id = uuid4()
+    errored_result = PipelineRunErrored(
+        pipeline_run_id=uuid4(),
+        dataset_id=dataset_id,
+        dataset_name="docs",
+    )
+    global_context_mock = AsyncMock(return_value={dataset_id: errored_result})
+    monkeypatch.setattr(pipeline_module, "global_context_index_pipeline", global_context_mock)
+    resolved = SimpleNamespace(id=dataset_id, name="docs")
+    monkeypatch.setattr(
+        improve_module,
+        "resolve_authorized_user_datasets",
+        AsyncMock(side_effect=lambda dataset, user: (user, [resolved])),
+    )
+
+    with pytest.raises(RuntimeError, match="global context index pipeline failed"):
+        await improve_module.improve(
+            dataset="docs",
+            user=SimpleNamespace(id="user-id"),
+            build_global_context_index=True,
+        )
+
+    global_context_mock.assert_awaited_once()
+
+
 def test_improve_payload_global_context_index_defaults_to_false():
     router_module = import_module("cognee.api.v1.improve.routers.get_improve_router")
 

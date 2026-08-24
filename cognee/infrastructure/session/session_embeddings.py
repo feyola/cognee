@@ -3,6 +3,7 @@
 from uuid import UUID
 
 from cognee.infrastructure.databases.vector.exceptions import CollectionNotFoundError
+from cognee.infrastructure.databases.vector.embeddings.compact_text import compact_embedding_text
 from cognee.infrastructure.engine import DataPoint
 from cognee.shared.logging_utils import get_logger
 
@@ -25,7 +26,8 @@ def session_scope_tag(user_id: str, session_id: str) -> str:
 
 
 def qa_vector_text(question: str, answer: str) -> str:
-    return f"{question or ''}\n{answer or ''}".strip()
+    compact_answer = compact_embedding_text(answer or "")
+    return compact_embedding_text(f"{question or ''}\n{compact_answer}".strip())
 
 
 def qa_entry_id(entry) -> str | None:

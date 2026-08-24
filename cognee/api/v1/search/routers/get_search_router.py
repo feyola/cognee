@@ -9,11 +9,16 @@ from pydantic import Field
 
 from cognee import __version__ as cognee_version
 from cognee.api.DTO import ErrorResponse, InDTO, OutDTO
+from cognee.context_global_variables import set_database_global_context_variables
 from cognee.exceptions import CogneeApiError
 from cognee.modules.search.operations import get_history
 from cognee.modules.search.types import SearchResult, SearchType
+from cognee.infrastructure.databases.unified import get_unified_engine
 from cognee.modules.users.methods import get_authenticated_user
 from cognee.modules.users.models import User
+from cognee.modules.users.permissions.methods.get_specific_user_permission_datasets import (
+    get_specific_user_permission_datasets,
+)
 from cognee.shared.usage_logger import log_usage
 from cognee.shared.utils import send_telemetry
 
@@ -22,12 +27,12 @@ from cognee.shared.utils import send_telemetry
 #       To search for datasets not owned by the request sender dataset UUID is needed
 class SearchPayloadDTO(InDTO):
     search_type: SearchType = Field(
-        default=SearchType.GRAPH_COMPLETION,
+        default=SearchType.HYBRID_COMPLETION,
         description=(
-            "Retrieval strategy. Common values: GRAPH_COMPLETION (default, graph context + LLM"
-            " answer), CODE (deterministic code graph), RAG_COMPLETION, CHUNKS, SUMMARIES,"
-            " TEMPORAL, FEELING_LUCKY (auto-select),"
-            " AGENTIC_COMPLETION (enables skills/tools/max_iter)."
+            "Retrieval strategy. Common values: HYBRID_COMPLETION (default, passages + entities +"
+            " LLM answer), GRAPH_COMPLETION (graph context + LLM answer), CODE (deterministic"
+            " code graph), RAG_COMPLETION, CHUNKS, SUMMARIES, TEMPORAL, FEELING_LUCKY"
+            " (auto-select), AGENTIC_COMPLETION (enables skills/tools/max_iter)."
         ),
     )
     datasets: Optional[list[str]] = Field(
@@ -103,6 +108,11 @@ class SearchPayloadDTO(InDTO):
     )
 
 
+class ChunkIdentityPayloadDTO(InDTO):
+    dataset_id: UUID
+    chunk_ids: list[UUID] = Field(min_length=1, max_length=100)
+
+
 def get_search_router() -> APIRouter:
     router = APIRouter()
 
@@ -111,6 +121,8 @@ def get_search_router() -> APIRouter:
         text: str
         user: str
         created_at: datetime
+        # Null when the search was not scoped to a single dataset.
+        dataset_id: Optional[UUID] = None
 
     @router.get(
         "",
@@ -140,7 +152,7 @@ def get_search_router() -> APIRouter:
         """
         send_telemetry(
             "Search API Endpoint Invoked",
-            user.id,
+            user,
             additional_properties={"endpoint": "GET /v1/search", "cognee_version": cognee_version},
         )
 
@@ -156,6 +168,27 @@ def get_search_router() -> APIRouter:
                     detail=str(error),
                 ).model_dump(),
             )
+
+    @router.post(
+        "/chunk-identities",
+        response_model=list[UUID],
+        responses={403: {"model": ErrorResponse}, 422: {"model": ErrorResponse}},
+    )
+    async def verify_chunk_identities(
+        payload: ChunkIdentityPayloadDTO,
+        user: User = Depends(get_authenticated_user),
+    ):
+        """Return only requested UUIDs that exist in an authorized dataset index."""
+        datasets = await get_specific_user_permission_datasets(
+            user.id, "read", [payload.dataset_id]
+        )
+        dataset = datasets[0]
+        async with set_database_global_context_variables(dataset.id, dataset.owner_id):
+            unified = await get_unified_engine()
+            found = await unified.vector.retrieve(
+                "DocumentChunk_text", [str(chunk_id) for chunk_id in payload.chunk_ids]
+            )
+        return [item.id for item in found]
 
     @router.post(
         "",
@@ -176,7 +209,7 @@ def get_search_router() -> APIRouter:
         types and can be scoped to specific datasets.
 
         ## Request Parameters
-        - **search_type** (SearchType): Type of search to perform (default: GRAPH_COMPLETION). Use AGENTIC_COMPLETION to enable skills, tools and max_iter.
+        - **search_type** (SearchType): Type of search to perform (default: HYBRID_COMPLETION). Use AGENTIC_COMPLETION to enable skills, tools and max_iter.
         - **datasets** (Optional[List[str]]): List of dataset names to search within
         - **dataset_ids** (Optional[List[UUID]]): List of dataset UUIDs to search within
         - **query** (str): The search query string
@@ -207,15 +240,17 @@ def get_search_router() -> APIRouter:
         """
         send_telemetry(
             "Search API Endpoint Invoked",
-            user.id,
+            user,
             additional_properties={
                 "endpoint": "POST /v1/search",
                 "search_type": str(payload.search_type),
                 "datasets": payload.datasets,
                 "dataset_ids": [str(dataset_id) for dataset_id in payload.dataset_ids or []],
-                "query": payload.query,
-                "system_prompt": payload.system_prompt,
-                "node_name": payload.node_name,
+                # Request fields are recorded by size, matching the recall
+                # endpoint's convention (see recall.py telemetry).
+                "query": len(payload.query or ""),
+                "system_prompt": len(payload.system_prompt or ""),
+                "node_name": len(payload.node_name or []),
                 "top_k": payload.top_k,
                 "only_context": payload.only_context,
                 "verbose": payload.verbose,
@@ -223,7 +258,7 @@ def get_search_router() -> APIRouter:
                 "tools": payload.tools,
                 "max_iter": payload.max_iter,
                 "include_references": payload.include_references,
-                "code_query": payload.code_query,
+                "code_query": len(str(payload.code_query)) if payload.code_query else 0,
                 "cognee_version": cognee_version,
             },
         )

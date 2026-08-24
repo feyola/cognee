@@ -14,6 +14,7 @@ from cognee.modules.graph.legacy.has_edges_in_legacy_ledger import has_edges_in_
 from cognee.modules.graph.legacy.has_nodes_in_legacy_ledger import has_nodes_in_legacy_ledger
 from cognee.modules.graph.methods.delete_from_graph_and_vector import delete_from_graph_and_vector
 from cognee.modules.graph.models import Edge, Node
+from cognee.modules.pipelines.models.PipelineRunInfo import PipelineRunAlreadyCompleted
 from cognee.shared.logging_utils import get_logger
 
 logger = get_logger("cognify.rollback")
@@ -29,6 +30,23 @@ def _to_uuid(value: Any) -> Optional[UUID]:
 
 
 def _extract_data_ids(data_ingestion_info: Any) -> set[UUID]:
+    """Data ids the failed run actually processed, read from its per-item results.
+
+    Entries reporting ``PipelineRunAlreadyCompleted`` are deliberately EXCLUDED.
+    That status means an earlier run had already extracted the item and this run
+    skipped it (``run_tasks_data_item`` short-circuits on the completed marker and
+    still yields a ``data_id``), so the run being rolled back neither produced its
+    graph artifacts nor owns its cognify marker.
+
+    Including them is what makes one unprocessable document cost a whole dataset:
+    ``run_tasks`` raises as soon as any item errors and hands the rollback *every*
+    result, so a single bad file clears the markers of every record in the dataset,
+    including ones extracted successfully weeks earlier. Those records keep their
+    nodes — the node/edge deletion below is correctly scoped by ``pipeline_run_id``
+    and never touches an earlier run's rows — so the two halves of the rollback end
+    up disagreeing: the marker says "not extracted", the graph says otherwise, and
+    the next ``cognify`` re-extracts the lot at full LLM cost.
+    """
     if not isinstance(data_ingestion_info, list):
         return set()
 
@@ -36,7 +54,30 @@ def _extract_data_ids(data_ingestion_info: Any) -> set[UUID]:
     for entry in data_ingestion_info:
         if not isinstance(entry, dict):
             continue
+        if isinstance(entry.get("run_info"), PipelineRunAlreadyCompleted):
+            continue
         maybe_data_id = _to_uuid(entry.get("data_id"))
+        if maybe_data_id:
+            data_ids.add(maybe_data_id)
+    return data_ids
+
+
+def _extract_input_data_ids(data: Any) -> set[UUID]:
+    """Return ids from the authoritative data items submitted to the failed run.
+
+    A failed graph write can be rolled back before every completed item's
+    provenance is still discoverable.  The pipeline passes its original Data
+    objects to the rollback handler, so include those ids when clearing
+    per-dataset processing status.  Otherwise a retry can skip an item whose
+    graph/vector artifacts were removed by the rollback.
+    """
+    if not isinstance(data, list):
+        return set()
+
+    data_ids: set[UUID] = set()
+    for entry in data:
+        candidate = entry.get("id") if isinstance(entry, dict) else getattr(entry, "id", None)
+        maybe_data_id = _to_uuid(candidate)
         if maybe_data_id:
             data_ids.add(maybe_data_id)
     return data_ids
@@ -88,6 +129,7 @@ async def cognify_rollback_handler(
     pipeline_run_id: UUID,
     dataset: Any,
     user: Any = None,
+    data: Any = None,
     data_ingestion_info: Any = None,
     **kwargs: Any,
 ) -> None:
@@ -120,6 +162,7 @@ async def cognify_rollback_handler(
                 graph_engine, str(pipeline_run_id)
             )
             target_data_ids |= _extract_data_ids(data_ingestion_info)
+            target_data_ids |= _extract_input_data_ids(data)
 
             await unified.rollback_by_pipeline_run_id(str(pipeline_run_id))
 
@@ -169,6 +212,7 @@ async def cognify_rollback_handler(
             {node.data_id for node in target_nodes}
             | {edge.data_id for edge in target_edges}
             | _extract_data_ids(data_ingestion_info)
+            | _extract_input_data_ids(data)
         )
 
         unique_nodes = []

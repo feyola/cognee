@@ -34,7 +34,6 @@ async def test_get_context_success(mock_vector_engine):
     ):
         objects = await retriever.get_retrieved_objects("test query")
         context = await retriever.get_context_from_objects("test query", objects)
-        await retriever.get_completion_from_context("test query", objects, context)
 
     assert context == "Alice knows Bob\nBob works at Tech Corp"
     mock_vector_engine.search.assert_awaited_once_with(
