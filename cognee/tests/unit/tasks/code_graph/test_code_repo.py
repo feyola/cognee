@@ -85,11 +85,17 @@ def test_manifest_hash_tracks_code_content(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_directory_with_project_resolves_to_repo_item_plus_documents(tmp_path):
+async def test_directory_with_project_resolves_to_repo_item_plus_documents(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    import cognee.infrastructure.llm.config as llm_config_module
     from cognee.tasks.ingestion.data_item import DataItem
     from cognee.tasks.ingestion.resolve_data_directories import resolve_data_directories
 
     repo = _make_repo(tmp_path)
+    monkeypatch.setattr(
+        llm_config_module, "get_llm_config", lambda: SimpleNamespace(llm_api_key="sk-set")
+    )
 
     resolved = await resolve_data_directories([str(repo)])
 

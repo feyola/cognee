@@ -460,8 +460,7 @@ async def test_get_completion_with_provided_context():
         mock_config.caching = False
         mock_cache_config.return_value = mock_config
 
-        objects = await retriever.get_retrieved_objects("What happened in 2024?")
-        await retriever.get_context_from_objects("What happened in 2024?", objects)
+        objects = []
         completion = await retriever.get_completion_from_context(
             query="test query", retrieved_objects=objects, context="Provided context"
         )
