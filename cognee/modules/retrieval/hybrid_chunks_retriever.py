@@ -13,6 +13,7 @@ from cognee.infrastructure.databases.vector.models.ScoredResult import ScoredRes
 from cognee.modules.retrieval.bm25_retriever import BM25ChunksRetriever
 from cognee.modules.retrieval.chunks_retriever import ChunksRetriever
 from cognee.modules.retrieval.exceptions.exceptions import NoDataError
+from cognee.modules.user_preferences import personal_factor
 from cognee.modules.retrieval.utils.chunk_metadata import (
     canonical_page_key,
     normalize_search_text,
@@ -37,6 +38,23 @@ class _Candidate:
     lexical_rank: int | None = None
 
 
+def _personalized_hybrid_relevance(
+    query: str,
+    candidate: _Candidate,
+    preference_weights: dict[str, float],
+    influence: float,
+) -> float:
+    """Apply Cognee preference weights in the hybrid retriever's score space."""
+    relevance = _hybrid_relevance(query, candidate)
+    chunk_id = candidate.payload.get("id") or candidate.result_id
+    if chunk_id is None:
+        chunk_id = candidate.identity
+    weight = preference_weights.get(str(chunk_id))
+    if weight is None:
+        return relevance
+    return relevance * personal_factor(weight, influence, distance_space=False)
+
+
 def fuse_chunk_results(
     query: str,
     vector_results: Any,
@@ -46,6 +64,8 @@ def fuse_chunk_results(
     page_limit: int | None = None,
     max_chunks_per_page: int = 1,
     max_context_chars: int = DEFAULT_MAX_CONTEXT_CHARS,
+    preference_weights: Optional[dict[str, float]] = None,
+    personalization_influence: float = 0.0,
 ) -> list[ScoredResult]:
     """Fuse ranked channels, then select diverse pages and bounded context."""
     if top_k < 1 or max_chunks_per_page < 1 or max_context_chars < 1:
@@ -82,7 +102,15 @@ def fuse_chunk_results(
 
     ranked = sorted(
         (
-            (_hybrid_relevance(query, candidate), candidate)
+            (
+                _personalized_hybrid_relevance(
+                    query,
+                    candidate,
+                    preference_weights or {},
+                    personalization_influence,
+                ),
+                candidate,
+            )
             for candidate in candidates.values()
             if not _historical_body(candidate.payload)
         ),
@@ -148,10 +176,7 @@ def fuse_chunk_results(
                 answer_hint = _alias_answer_hint_score(query, candidate.payload)
                 section_match = _exact_section_match_score(query, candidate.payload)
                 return (
-                    relevance
-                    + min(3, len(novel)) * 0.012
-                    + answer_hint
-                    + section_match,
+                    relevance + min(3, len(novel)) * 0.012 + answer_hint + section_match,
                     relevance,
                     candidate.identity,
                 )
@@ -180,6 +205,8 @@ class HybridChunksRetriever(ChunksRetriever):
         page_limit: int | None = None,
         max_chunks_per_page: int = 1,
         max_context_chars: int = DEFAULT_MAX_CONTEXT_CHARS,
+        preference_weights: Optional[dict[str, float]] = None,
+        personalization_influence: float = 0.0,
     ):
         super().__init__(
             top_k=top_k, node_name=node_name, node_name_filter_operator=node_name_filter_operator
@@ -188,6 +215,8 @@ class HybridChunksRetriever(ChunksRetriever):
         self.page_limit = page_limit
         self.max_chunks_per_page = max_chunks_per_page
         self.max_context_chars = max_context_chars
+        self.preference_weights = preference_weights or {}
+        self.personalization_influence = personalization_influence
 
     async def get_retrieved_objects(self, query: str) -> Any:
         unified = await get_unified_engine()
@@ -228,6 +257,8 @@ class HybridChunksRetriever(ChunksRetriever):
             page_limit=self.page_limit,
             max_chunks_per_page=self.max_chunks_per_page,
             max_context_chars=self.max_context_chars,
+            preference_weights=self.preference_weights,
+            personalization_influence=self.personalization_influence,
         )
 
 

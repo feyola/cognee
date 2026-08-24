@@ -9,12 +9,13 @@ from cognee.modules.retrieval.triplet_retriever import TripletRetriever
 from cognee.modules.search.types import SearchType
 from cognee.modules.search.operations import select_search_type
 from cognee.modules.search.exceptions import UnsupportedSearchTypeError
+from cognee.modules.retrieval.exceptions.exceptions import QueryValidationError
 
 # Retrievers
 from cognee.modules.retrieval.chunks_retriever import ChunksRetriever
 from cognee.modules.retrieval.summaries_retriever import SummariesRetriever
 from cognee.modules.retrieval.completion_retriever import CompletionRetriever
-from cognee.modules.retrieval.hybrid_retriever import HybridRetriever
+from cognee.modules.retrieval.hybrid_retriever import HybridRetriever, DEFAULT_HYBRID_LANE_TOP_K
 from cognee.modules.retrieval.graph_completion_retriever import GraphCompletionRetriever
 from cognee.modules.retrieval.graph_completion_decomposition_retriever import (
     GraphCompletionDecompositionRetriever,
@@ -34,7 +35,21 @@ from cognee.modules.retrieval.cypher_search_retriever import CypherSearchRetriev
 from cognee.modules.retrieval.natural_language_retriever import NaturalLanguageRetriever
 from cognee.modules.retrieval.agentic_retriever import AgenticRetriever
 from cognee.modules.retrieval.code_retriever import CodeRetriever
+from cognee.modules.retrieval.graph_report_retriever import GraphReportRetriever
 from cognee.context_global_variables import session_user
+
+
+def _hybrid_lane_top_k(config: dict, key: str, search_top_k: int | None) -> int | None:
+    """Search top_k feeds hybrid's chunk/entity/fact lanes, capped so default context stays small.
+
+    An explicit retriever_specific_config value is not capped.
+    None is left unset so the retriever can apply its own default.
+    """
+    if key in config:
+        return config[key]
+    if search_top_k is None:
+        return None
+    return min(search_top_k, DEFAULT_HYBRID_LANE_TOP_K)
 
 
 async def get_search_type_retriever_instance(
@@ -61,13 +76,15 @@ async def get_search_type_retriever_instance(
 
     # Extract common defaults with fallback values from kwargs
     top_k = kwargs.get("top_k", 15)
+    if top_k is not None and top_k <= 0:
+        raise QueryValidationError(message="top_k must be a positive integer.")
     system_prompt_path = kwargs.get("system_prompt_path", "answer_simple_question.txt")
     system_prompt = kwargs.get("system_prompt")
     node_type = kwargs.get("node_type", NodeSet)
     node_name = kwargs.get("node_name")
     node_name_filter_operator = kwargs.get("node_name_filter_operator", "OR")
-    wide_search_top_k = kwargs.get("wide_search_top_k", 100)
-    triplet_distance_penalty = kwargs.get("triplet_distance_penalty", 6.5)
+    wide_search_top_k = kwargs.get("wide_search_top_k")
+    triplet_distance_penalty = kwargs.get("triplet_distance_penalty")
     feedback_influence = kwargs.get(
         "feedback_influence", get_base_config().default_feedback_influence
     )
@@ -102,6 +119,7 @@ async def get_search_type_retriever_instance(
                 "include_references": include_references,
                 "node_name": node_name,
                 "node_name_filter_operator": node_name_filter_operator,
+                "wide_search_top_k": wide_search_top_k,
                 "candidate_pool_size": retriever_specific_config.get("candidate_pool_size", 30),
                 "max_context_chars": retriever_specific_config.get("max_context_chars", 15_000),
                 "max_chunks_per_page": retriever_specific_config.get("max_chunks_per_page", 2),
@@ -110,8 +128,12 @@ async def get_search_type_retriever_instance(
         SearchType.HYBRID_COMPLETION: (
             HybridRetriever,
             {
-                "chunks_top_k": retriever_specific_config.get("chunks_top_k", top_k),
-                "entities_top_k": retriever_specific_config.get("entities_top_k", top_k),
+                "chunks_top_k": _hybrid_lane_top_k(
+                    retriever_specific_config, "chunks_top_k", top_k
+                ),
+                "entities_top_k": _hybrid_lane_top_k(
+                    retriever_specific_config, "entities_top_k", top_k
+                ),
                 "max_edges_per_entity": retriever_specific_config.get("max_edges_per_entity", 10),
                 "node_name": node_name,
                 "node_name_filter_operator": node_name_filter_operator,
@@ -130,7 +152,8 @@ async def get_search_type_retriever_instance(
                     "use_importance_weight", True
                 ),
                 "use_truth_weight": retriever_specific_config.get("use_truth_weight", False),
-                "facts_top_k": retriever_specific_config.get("facts_top_k", top_k),
+                "facts_top_k": _hybrid_lane_top_k(retriever_specific_config, "facts_top_k", top_k),
+                "include_references": include_references,
             },
         ),
         SearchType.TRIPLET_COMPLETION: (
@@ -328,8 +351,10 @@ async def get_search_type_retriever_instance(
                 "node_name_filter_operator": node_name_filter_operator,
                 "candidate_pool_size": retriever_specific_config.get("candidate_pool_size", 30),
                 "max_context_chars": retriever_specific_config.get("max_context_chars", 15_000),
+                "max_chunks_per_page": retriever_specific_config.get("max_chunks_per_page", 1),
             },
         ),
+        SearchType.GRAPH_REPORT: (GraphReportRetriever, {"top_n": top_k}),
         SearchType.CODING_RULES: (
             CodingRulesRetriever,
             {"rules_nodeset_name": node_name},

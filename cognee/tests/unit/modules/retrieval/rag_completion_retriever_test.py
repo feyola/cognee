@@ -122,6 +122,8 @@ async def test_get_context_top_k_limit(mock_hybrid_retriever):
         page_limit=2,
         max_chunks_per_page=2,
         max_context_chars=15_000 - len(CURRENTNESS_GUIDANCE),
+        preference_weights={},
+        personalization_influence=0.0,
     )
 
 
@@ -347,6 +349,8 @@ async def test_get_context_forwards_nodeset_filter_to_vector_search(mock_hybrid_
         page_limit=3,
         max_chunks_per_page=2,
         max_context_chars=15_000 - len(CURRENTNESS_GUIDANCE),
+        preference_weights={},
+        personalization_influence=0.0,
     )
 
 

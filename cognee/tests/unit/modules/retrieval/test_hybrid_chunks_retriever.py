@@ -125,9 +125,7 @@ def test_shared_supply_alias_promotes_distinct_answer_pages():
         _text(
             "Skills and learning",
             aliases=["NPC sell orders"],
-            alias_relations={
-                "NPC sell orders": ["skillbooks", "sold by NPC corporations"]
-            },
+            alias_relations={"NPC sell orders": ["skillbooks", "sold by NPC corporations"]},
             body="Most skillbooks are sold by NPC corporations for a fixed price.",
         )
     )
@@ -150,9 +148,11 @@ def test_shared_supply_alias_promotes_distinct_answer_pages():
         top_k=3,
     )
 
-    assert {
-        parse_json_front_matter(result.payload["text"])["title"] for result in results
-    } == {"Blueprints", "Skills and learning", "Setting up a planetary colony"}
+    assert {parse_json_front_matter(result.payload["text"])["title"] for result in results} == {
+        "Blueprints",
+        "Skills and learning",
+        "Setting up a planetary colony",
+    }
 
 
 def test_related_alias_selects_answer_bearing_primary_chunk():
@@ -481,9 +481,7 @@ def test_body_gated_alias_relations_reserve_distinct_support_pages():
     colony = _result(
         _text(
             "Setting up a planetary colony",
-            alias_relations={
-                "NPC sell orders": ["Planetary Command Center", "NPC merchants"]
-            },
+            alias_relations={"NPC sell orders": ["Planetary Command Center", "NPC merchants"]},
             body="A Planetary Command Center is sold by NPC merchants.",
         )
     )
@@ -611,3 +609,50 @@ def test_canonical_front_matter_is_preserved_in_evidence():
 
     assert "Trading: https://wiki.eveuniversity.org/Trading" in evidence
     assert "chunk 7" in evidence
+
+
+def test_personalization_reorders_hybrid_candidates_before_page_selection():
+    first = _result("neutral candidate", chunk_index=0)
+    preferred = _result("preferred candidate", chunk_index=1)
+
+    results = fuse_chunk_results(
+        "unmatched query",
+        [first, preferred],
+        [],
+        top_k=1,
+        preference_weights={
+            str(first.payload["id"]): 0.0,
+            str(preferred.payload["id"]): 1.0,
+        },
+        personalization_influence=1.0,
+    )
+
+    assert results[0].id == preferred.id
+
+
+def test_personalization_uses_result_id_when_payload_has_no_id():
+    first = _result("neutral candidate", chunk_index=0)
+    preferred_id = uuid4()
+    preferred = ScoredResult(
+        id=preferred_id,
+        score=0.1,
+        payload={
+            "document_name": "other.md",
+            "chunk_index": 0,
+            "text": "preferred candidate",
+        },
+    )
+
+    results = fuse_chunk_results(
+        "unmatched query",
+        [first, preferred],
+        [],
+        top_k=1,
+        preference_weights={
+            str(first.payload["id"]): 0.0,
+            str(preferred_id): 1.0,
+        },
+        personalization_influence=1.0,
+    )
+
+    assert results[0].id == preferred_id

@@ -1,7 +1,9 @@
 from typing import Any, Dict, List, Optional, Type
 
 from cognee.shared.logging_utils import get_logger
+from cognee.infrastructure.databases.vector import get_vector_engine_async
 from cognee.modules.retrieval.utils.completion import generate_completion
+from cognee.modules.retrieval.utils.merge_results import conversational_reserve, merge_ranked
 from cognee.infrastructure.session.get_session_manager import get_session_manager
 from cognee.modules.retrieval.base_retriever import BaseRetriever
 from cognee.modules.retrieval.utils.used_graph_elements import extract_from_scored_results
@@ -14,6 +16,12 @@ from cognee.modules.retrieval.hybrid_chunks_retriever import (
     HybridChunksRetriever,
 )
 from cognee.modules.retrieval.utils.chunk_metadata import canonical_page_key
+from cognee.base_config import get_base_config
+from cognee.modules.user_preferences import (
+    load_preference_text,
+    load_preference_weights,
+    personal_factor,
+)
 
 logger = get_logger("CompletionRetriever")
 
@@ -28,10 +36,66 @@ CURRENTNESS_GUIDANCE = (
 )
 
 
+def _stable_sort_by_personal_distance(
+    found_chunks: List[Any], weights: Dict[str, float], influence: float
+) -> List[Any]:
+    """Stable re-sort of ScoredResult chunks by personalized distance.
+
+    ``score`` is a distance here (lower is better), so a preferred chunk's
+    distance shrinks by ``personal_factor(..., distance_space=True)``. Chunk
+    id comes from ``payload["id"]`` falling back to ``.id`` — the same rule
+    ``extract_from_scored_results`` uses, so the ids match the ones the
+    preference update wrote ``prefers`` edges for. Chunks with no matching
+    weight keep their raw distance, and the sort is stable, so ties keep the
+    vector engine's order.
+    """
+
+    def personalized_distance(chunk: Any) -> float:
+        chunk_id = None
+        payload = getattr(chunk, "payload", None)
+        if isinstance(payload, dict):
+            chunk_id = payload.get("id")
+        if chunk_id is None:
+            chunk_id = getattr(chunk, "id", None)
+        weight = weights.get(str(chunk_id)) if chunk_id is not None else None
+        if weight is None:
+            return chunk.score
+        return chunk.score * personal_factor(weight, influence, distance_space=True)
+
+    return sorted(found_chunks, key=personalized_distance)
+
+
+async def _weights_matching_collection(
+    vector_engine: Any, weights: Dict[str, float], collection_name: str = "DocumentChunk_text"
+) -> Dict[str, float]:
+    """Keep only the prefers weights whose key is a row in this collection.
+
+    Weight keys span every rated node — graph entities included — but only
+    chunk ids can ever match a ``DocumentChunk_text`` result, so weights that
+    point elsewhere must not trigger the wide fetch: the extra work would be
+    guaranteed to change nothing. One id-lookup ``retrieve`` answers the
+    question; on any error it fails open by returning the weights unfiltered,
+    so a broken lookup costs a wider search, never a lost personalization.
+    """
+    try:
+        rows = await vector_engine.retrieve(collection_name, list(weights))
+    except Exception as error:
+        logger.debug("Preference weight collection check failed open: %s", error)
+        return weights
+
+    present = set()
+    for row in rows:
+        payload = getattr(row, "payload", None)
+        if isinstance(payload, dict) and payload.get("id") is not None:
+            present.add(str(payload["id"]))
+        row_id = getattr(row, "id", None)
+        if row_id is not None:
+            present.add(str(row_id))
+    return {key: weight for key, weight in weights.items() if key in present}
+
+
 class CompletionRetriever(BaseRetriever):
-    """
-    Retriever for handling LLM-based completion searches.
-    """
+    """Retriever for LLM completions over page-diverse hybrid chunk retrieval."""
 
     def __init__(
         self,
@@ -44,6 +108,7 @@ class CompletionRetriever(BaseRetriever):
         include_references: bool = False,
         node_name: Optional[List[str]] = None,
         node_name_filter_operator: str = "OR",
+        wide_search_top_k: Optional[int] = 100,
         candidate_pool_size: int = DEFAULT_CANDIDATE_POOL,
         max_context_chars: int = DEFAULT_MAX_CONTEXT_CHARS,
         max_chunks_per_page: int = 2,
@@ -52,6 +117,7 @@ class CompletionRetriever(BaseRetriever):
         self.user_prompt_path = user_prompt_path
         self.system_prompt_path = system_prompt_path
         self.top_k = top_k if top_k is not None else 1
+        self.wide_search_top_k = wide_search_top_k
         self.system_prompt = system_prompt
         self.session_id = session_id
         self.response_model = response_model
@@ -63,6 +129,15 @@ class CompletionRetriever(BaseRetriever):
         self.max_chunks_per_page = max_chunks_per_page
 
     async def get_retrieved_objects(self, query: str) -> Any:
+        weights = await load_preference_weights()
+        if weights:
+            vector_engine = await get_vector_engine_async()
+            weights = await _weights_matching_collection(vector_engine, weights)
+
+        candidate_pool_size = max(self.candidate_pool_size, self.top_k)
+        if weights:
+            candidate_pool_size = max(candidate_pool_size, self.wide_search_top_k or 0)
+
         candidate_context_limit = max(
             1,
             self.max_context_chars - len(CURRENTNESS_GUIDANCE),
@@ -71,44 +146,37 @@ class CompletionRetriever(BaseRetriever):
             top_k=self.top_k,
             node_name=self.node_name,
             node_name_filter_operator=self.node_name_filter_operator,
-            candidate_pool_size=self.candidate_pool_size,
+            candidate_pool_size=candidate_pool_size,
             page_limit=min(3, self.top_k),
             max_chunks_per_page=self.max_chunks_per_page,
             max_context_chars=candidate_context_limit,
+            preference_weights=weights,
+            personalization_influence=(
+                get_base_config().personalization_influence if weights else 0.0
+            ),
         )
         results = await retriever.get_retrieved_objects(query)
         return _group_answer_chunks_by_page(results)
 
-    def _extract_context_object_ids(self, retrieved_objects: Any) -> Optional[Dict[str, List[str]]]:
+    def merge_retrieved_objects(self, primary: Any, secondary: Any) -> Any:
+        return merge_ranked(
+            primary,
+            secondary,
+            limit=self.top_k,
+            secondary_reserve=conversational_reserve(self.top_k),
+        )
+
+    def extract_context_object_ids(self, retrieved_objects: Any) -> Optional[Dict[str, List[str]]]:
         """Extract node_ids from ScoredResult-like list for session QA."""
         if isinstance(retrieved_objects, list) and retrieved_objects:
             return extract_from_scored_results(retrieved_objects)
         return None
 
     async def get_context_from_objects(self, query: str, retrieved_objects: Any) -> str:
-        """
-        Retrieves relevant document chunks as context.
-
-        Fetches document chunks based on a query from a vector engine and combines their text.
-        Returns empty string if no chunks are found. Raises NoDataError if the collection is not
-        found.
-
-        Parameters:
-        -----------
-
-            - query (str): The query string used to search for relevant document chunks.
-
-        Returns:
-        --------
-
-            - str: A string containing the combined text of the retrieved document chunks, or an
-              empty string if none are found.
-        """
+        """Combine retrieved chunk text with the production currentness policy."""
         if retrieved_objects:
-            # Combine all chunks text returned from vector search (number of chunks is determined by top_k)
             chunks_payload = [found_chunk.payload["text"] for found_chunk in retrieved_objects]
-            combined_context = CURRENTNESS_GUIDANCE + "\n".join(chunks_payload)
-            return combined_context
+            return CURRENTNESS_GUIDANCE + "\n".join(chunks_payload)
         return ""
 
     def _completion_kwargs(self, context: str) -> dict:
@@ -124,8 +192,18 @@ class CompletionRetriever(BaseRetriever):
     async def _generate_completion_without_session(self, query: str, context: str) -> List[Any]:
         """Generate completion without session; returns list of one completion."""
         kwargs = self._completion_kwargs(context)
-        completion = await generate_completion(query=query, **kwargs)
+        preference_text = await load_preference_text()
+        completion = await generate_completion(
+            query=query, conversation_history=preference_text, **kwargs
+        )
         return [completion]
+
+    async def append_references(self, completions: List[Any], retrieved_objects: Any) -> List[Any]:
+        return append_chunk_evidence(
+            completions,
+            retrieved_objects,
+            enabled=self.include_references and self.response_model is str,
+        )
 
     async def get_completion_from_context(
         self,
@@ -135,27 +213,7 @@ class CompletionRetriever(BaseRetriever):
         effective_query: Optional[str] = None,
         turn_preparation=None,
     ) -> List[Any]:
-        """
-        Generates an LLM completion using the context.
-
-        Retrieves context if not provided and generates a completion based on the query and
-        context using an external completion generator.
-
-        Parameters:
-        -----------
-
-            - query (str): The query string to be used for generating a completion.
-            - context (Optional[Any]): Optional pre-fetched context to use for generating the
-              completion; if None, it retrieves the context for the query. (default None)
-            - session_id (Optional[str]): Optional session identifier for caching. If None,
-              defaults to 'default_session'. (default None)
-            - response_model (Type): The Pydantic model type for structured output. (default str)
-
-        Returns:
-        --------
-
-            - Any: The generated completion based on the provided query and context.
-        """
+        """Generate an LLM completion from retrieved context."""
         cache_config = CacheConfig()
         user = session_user.get()
         user_id = getattr(user, "id", None)
@@ -163,7 +221,7 @@ class CompletionRetriever(BaseRetriever):
 
         if use_session:
             sm = get_session_manager()
-            used_graph_element_ids = self._extract_context_object_ids(retrieved_objects)
+            used_graph_element_ids = self.extract_context_object_ids(retrieved_objects)
             completion = await sm.generate_completion_with_session(
                 session_id=self.session_id,
                 query=query,
@@ -174,7 +232,7 @@ class CompletionRetriever(BaseRetriever):
                 response_model=self.response_model,
                 summarize_context=False,
                 used_graph_element_ids=used_graph_element_ids,
-                max_context_chars=getattr(self, "max_context_chars", None),
+                max_context_chars=self.max_context_chars,
                 effective_query=effective_query,
                 turn_preparation=turn_preparation,
             )
@@ -182,15 +240,7 @@ class CompletionRetriever(BaseRetriever):
         else:
             completions = await self._generate_completion_without_session(query, context)
 
-        # Both the session/cache branch and the non-session branch rejoin here so
-        # logged-in/cached calls also receive references. Evidence is grounded in
-        # each completion's own text, so a cache-hit answer never cites chunks
-        # that share nothing with it.
-        return append_chunk_evidence(
-            completions,
-            retrieved_objects,
-            enabled=self.include_references and self.response_model is str,
-        )
+        return await self.append_references(completions, retrieved_objects)
 
 
 def _group_answer_chunks_by_page(retrieved_objects: Any) -> Any:
