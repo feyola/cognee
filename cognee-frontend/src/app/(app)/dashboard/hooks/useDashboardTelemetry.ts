@@ -7,6 +7,7 @@ import { useCogniInstance, useTenant } from "@/modules/tenant/TenantProvider";
 import { useFilter } from "@/ui/layout/FilterContext";
 import { listSessions } from "@/modules/sessions/getSessions";
 import type { SessionRow } from "@/modules/sessions/getSessions";
+import { normalizePipelineRuns } from "@/modules/activity/normalizePipelineRuns";
 import { useCircuitBreaker } from "@/modules/query/useCircuitBreaker";
 import type { PipelineRun, Range } from "@/ui/elements/AgentActivityTerminal";
 
@@ -46,7 +47,7 @@ export function useDashboardTelemetry(range: Range): DashboardTelemetry {
         listSessions(cogniInstance, { range, limit: 50 }, { signal, timeoutMs: BACKGROUND_POLL_TIMEOUT_MS }),
       ]);
       return {
-        runs: (Array.isArray(runData) ? runData : []) as PipelineRun[],
+        runs: normalizePipelineRuns(runData),
         sessions: sessionsPage?.sessions ?? [],
       };
     },
