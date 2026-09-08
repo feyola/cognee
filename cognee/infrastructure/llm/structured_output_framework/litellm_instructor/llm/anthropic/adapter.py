@@ -31,6 +31,38 @@ from cognee.shared.rate_limiting import llm_rate_limiter_context_manager
 logger = get_logger()
 observe = get_observe()
 
+# Sampling parameters the Anthropic SDK 1.x no longer accepts as keyword
+# arguments. ``messages.create`` is generated from the OpenAPI spec, so an
+# untyped keyword raises TypeError client-side, before any request is made.
+# The REST API still honours all three in the request body, and every adapter
+# receives them through ``llm_args`` (LLMConfig folds LLM_TEMPERATURE / LLM_SEED
+# in there), so route them into ``extra_body`` rather than letting them explode.
+# Dropping them instead would be worse than it looks: extraction would silently
+# run at the model default rather than the deterministic temperature the
+# operator configured.
+BODY_ONLY_SAMPLING_PARAMS = ("temperature", "top_p", "top_k")
+
+
+def route_body_only_params(kwargs: dict[str, Any]) -> dict[str, Any]:
+    """
+    Move sampling parameters the SDK does not type into ``extra_body``.
+
+    Parameters:
+    -----------
+
+        - kwargs (dict[str, Any]): Completion keyword arguments; mutated in place.
+
+    Returns:
+    --------
+
+        - dict[str, Any]: The same mapping, with sampling parameters relocated.
+    """
+    routed = {key: kwargs.pop(key) for key in BODY_ONLY_SAMPLING_PARAMS if key in kwargs}
+    if routed:
+        # An explicit extra_body wins: that is a caller reaching past this shim.
+        kwargs["extra_body"] = {**routed, **(kwargs.get("extra_body") or {})}
+    return kwargs
+
 
 class AnthropicAdapter(GenericAPIAdapter):
     """
@@ -106,7 +138,7 @@ class AnthropicAdapter(GenericAPIAdapter):
 
             - BaseModel: An instance of BaseModel containing the structured response.
         """
-        merged_kwargs = {**self.llm_args, **kwargs}
+        merged_kwargs = route_body_only_params({**self.llm_args, **kwargs})
         try:
             async with llm_rate_limiter_context_manager():
                 return await self.aclient(
