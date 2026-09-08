@@ -20,7 +20,7 @@ def _text(
 ) -> str:
     metadata = {
         "title": title,
-        "canonical_url": url or f"https://wiki.eveuniversity.org/{title.replace(' ', '_')}",
+        "canonical_url": url or f"https://docs.example.org/{title.replace(' ', '_')}",
         "aliases": aliases or [],
         "alias_relations": alias_relations or {},
         "section_path": section or ["Overview"],
@@ -156,7 +156,7 @@ def test_shared_supply_alias_promotes_distinct_answer_pages():
 
 
 def test_related_alias_selects_answer_bearing_primary_chunk():
-    url = "https://wiki.eveuniversity.org/Skills_and_learning"
+    url = "https://docs.example.org/Skills_and_learning"
     relations = {
         "NPC sell orders": [
             "skillbooks",
@@ -194,7 +194,7 @@ def test_related_alias_selects_answer_bearing_primary_chunk():
 
 
 def test_answer_body_overlap_selects_the_supporting_chunk_within_a_page():
-    url = "https://wiki.eveuniversity.org/Insurgency"
+    url = "https://docs.example.org/Insurgency"
     overview = _result(
         _text(
             "Insurgency",
@@ -223,7 +223,7 @@ def test_answer_body_overlap_selects_the_supporting_chunk_within_a_page():
 
 
 def test_page_reranking_prefers_summary_over_table_and_notes_chunks():
-    url = "https://wiki.eveuniversity.org/Sin"
+    url = "https://docs.example.org/Sin"
     table = _result(
         _text("Sin", url=url, section=["Overview"], kind="table", body="Ship statistics."),
         chunk_index=2,
@@ -248,7 +248,7 @@ def test_page_reranking_prefers_summary_over_table_and_notes_chunks():
 
 
 def test_primary_slots_are_canonical_page_diverse_then_retain_extra_chunks():
-    trading_url = "https://wiki.eveuniversity.org/Trading"
+    trading_url = "https://docs.example.org/Trading"
     chunks = [
         _result(_text("Trading", url=trading_url, section=[f"Trading {index}"]))
         for index in range(3)
@@ -278,7 +278,7 @@ def test_primary_slots_are_canonical_page_diverse_then_retain_extra_chunks():
 
 
 def test_secondary_chunk_adds_uncovered_query_aspect_within_selected_page():
-    url = "https://wiki.eveuniversity.org/Insurgency"
+    url = "https://docs.example.org/Insurgency"
     primary = _result(
         _text(
             "Insurgency",
@@ -319,7 +319,7 @@ def test_secondary_chunk_adds_uncovered_query_aspect_within_selected_page():
 
 
 def test_secondary_chunk_prefers_more_uncovered_query_aspects():
-    url = "https://wiki.eveuniversity.org/Trading"
+    url = "https://docs.example.org/Trading"
     primary = _result(
         _text("Trading", url=url, body="Station trading profitability depends on margins.")
     )
@@ -349,7 +349,7 @@ def test_secondary_chunk_prefers_more_uncovered_query_aspects():
 
 
 def test_named_section_beats_broader_higher_ranked_chunk_on_same_page():
-    url = "https://wiki.eveuniversity.org/Trading"
+    url = "https://docs.example.org/Trading"
     primary = _result(
         _text(
             "Trading",
@@ -390,7 +390,7 @@ def test_named_section_beats_broader_higher_ranked_chunk_on_same_page():
 
 
 def test_secondary_chunk_uses_related_alias_to_ground_answer_chain():
-    url = "https://wiki.eveuniversity.org/Jump_drives"
+    url = "https://docs.example.org/Jump_drives"
     aliases = ["Sin fuel", "Oxygen Isotopes"]
     relations = {"Sin fuel": ["Oxygen Isotopes"]}
     formula = _result(
@@ -440,7 +440,7 @@ def test_secondary_chunk_uses_related_alias_to_ground_answer_chain():
 
 
 def test_exact_identifier_selects_answer_bearing_table_over_flat_alias_overview():
-    url = "https://wiki.eveuniversity.org/Wormhole_attributes"
+    url = "https://docs.example.org/Wormhole_attributes"
     aliases = ["C12", "C9", "E587", "Thera to nullsec", "wormhole connection"]
     overview = _result(
         _text(
@@ -508,7 +508,7 @@ def test_body_gated_alias_relations_reserve_distinct_support_pages():
 
 
 def test_related_alias_evidence_outranks_unrelated_flat_alias():
-    url = "https://wiki.eveuniversity.org/Jump_drives"
+    url = "https://docs.example.org/Jump_drives"
     distractor = _result(
         _text(
             "Jump drives",
@@ -607,7 +607,7 @@ def test_canonical_front_matter_is_preserved_in_evidence():
         answer="Sales tax is currently 7.5 percent.",
     )
 
-    assert "Trading: https://wiki.eveuniversity.org/Trading" in evidence
+    assert "Trading: https://docs.example.org/Trading" in evidence
     assert "chunk 7" in evidence
 
 

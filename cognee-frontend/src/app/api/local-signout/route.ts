@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
-
-const localApiUrl = process.env.COGNEE_INTERNAL_API_URL || "http://api:8000";
+import { getServerBackendUrl } from "@/modules/config/serverRuntimeConfig";
 
 export async function GET(request: Request) {
+  const localApiUrl = getServerBackendUrl();
   // Call the local backend's logout endpoint to invalidate the session
   try {
     await fetch(`${localApiUrl}/api/v1/auth/logout`, {

@@ -149,20 +149,20 @@ def test_format_chunk_references_snippet_truncated():
 def test_front_matter_title_and_canonical_url_override_generic_document_name():
     text = (
         '---\ntitle: "Trading"\n'
-        'canonical_url: "https://wiki.eveuniversity.org/Trading"\n---\n\n'
+        'canonical_url: "https://docs.example.org/Trading"\n---\n\n'
         "Sales tax is 7.5 percent."
     )
 
     result = format_chunk_references([_payload(text=text, chunk_index=6)])
 
-    assert "- Trading: https://wiki.eveuniversity.org/Trading (chunk 7)" in result
+    assert "- Trading: https://docs.example.org/Trading (chunk 7)" in result
 
 
 def test_front_matter_preserves_chunk_index_and_document_id():
     text = (
         '---\ndocument_id: "mediawiki:131:9001:chunk:0007"\n'
         'title: "Trading"\n'
-        'canonical_url: "https://wiki.eveuniversity.org/Trading"\n'
+        'canonical_url: "https://docs.example.org/Trading"\n'
         "chunk_index: 7\n---\n\n"
         "Sales tax is 7.5 percent."
     )
@@ -171,7 +171,7 @@ def test_front_matter_preserves_chunk_index_and_document_id():
 
     result = format_chunk_references([payload])
 
-    assert "Trading: https://wiki.eveuniversity.org/Trading (source chunk 0007)" in result
+    assert "Trading: https://docs.example.org/Trading (source chunk 0007)" in result
     assert "source_id: mediawiki:131:9001:chunk:0007" in result
 
 
@@ -179,9 +179,9 @@ def test_front_matter_is_removed_from_overlap_and_supporting_snippet():
     text = (
         '---\ndocument_id: "mediawiki:131:9001:chunk:0006"\n'
         'title: "Trading"\n'
-        'canonical_url: "https://wiki.eveuniversity.org/Trading"\n'
+        'canonical_url: "https://docs.example.org/Trading"\n'
         "chunk_index: 6\n---\n\n"
-        "> extraction-solutions provenance: source_item_id=item\n\n"
+        "> source provenance: source_item_id=item\n\n"
         "# Trading\n\nSales tax is 7.5% and Accounting reduces it to 3.37%."
     )
     result = format_chunk_references(
@@ -202,7 +202,7 @@ def test_reference_includes_request_dataset_and_exact_node_sets():
     text = (
         '---\ndocument_id: "mediawiki:131:9001:chunk:0006"\n'
         'title: "Trading"\n'
-        'canonical_url: "https://wiki.eveuniversity.org/Trading"\n'
+        'canonical_url: "https://docs.example.org/Trading"\n'
         "chunk_index: 6\n---\n\n"
         "Sales tax is 7.5 percent."
     )
@@ -229,7 +229,7 @@ def test_supporting_snippet_focuses_on_late_answer_terms():
     text = (
         '---\ndocument_id: "mediawiki:1:2:chunk:0005"\n'
         'title: "Insurgency"\n'
-        'canonical_url: "https://wiki.eveuniversity.org/Insurgency"\n'
+        'canonical_url: "https://docs.example.org/Insurgency"\n'
         "chunk_index: 5\n---\n\n"
         + "Background mechanics. " * 80
         + "Winning pilots receive ISK and loyalty points at the conclusion."
@@ -249,7 +249,7 @@ def test_supporting_snippet_prefers_distinctive_answer_phrase():
     text = (
         '---\ndocument_id: "mediawiki:10289:1:chunk:0004"\n'
         'title: "Moving your items"\n'
-        'canonical_url: "https://wiki.eveuniversity.org/Moving_your_items"\n'
+        'canonical_url: "https://docs.example.org/Moving_your_items"\n'
         "chunk_index: 4\n---\n\n"
         + "Cargo routes, hauler time, reward, collateral, and risk. " * 35
         + "Janice gives a Total Sell Value for the cargo. "
@@ -271,7 +271,7 @@ def test_supporting_snippet_prefers_distinctive_answer_phrase():
 def test_supporting_snippet_retains_leading_identity_for_multihop_claim():
     text = (
         '---\ndocument_id: "mediawiki:3981:1:chunk:0002"\n'
-        'title: "Sin"\ncanonical_url: "https://wiki.eveuniversity.org/Sin"\n'
+        'title: "Sin"\ncanonical_url: "https://docs.example.org/Sin"\n'
         "chunk_index: 2\n---\n\n"
         "# Sin | Sin | Gallente Federation | Black Ops | "
         + "General ship description. " * 80
@@ -291,7 +291,7 @@ def test_supporting_snippet_prioritizes_distinctive_alphanumeric_claim_code():
     text = (
         '---\ndocument_id: "mediawiki:7611:1:chunk:0010"\n'
         'title: "Wormhole attributes"\n'
-        'canonical_url: "https://wiki.eveuniversity.org/Wormhole_attributes"\n'
+        'canonical_url: "https://docs.example.org/Wormhole_attributes"\n'
         "chunk_index: 10\n---\n\n"
         + "Thera null security wormhole space background. " * 50
         + "E587 connects C12 Thera to C9 null security space. "
@@ -333,7 +333,7 @@ def test_structured_answer_snippet_centers_claim_entities_not_json_fields():
     text = (
         '---\ndocument_id: "mediawiki:6281:231494:chunk:0002"\n'
         'title: "Jump drives"\n'
-        'canonical_url: "https://wiki.eveuniversity.org/Jump_drives"\n'
+        'canonical_url: "https://docs.example.org/Jump_drives"\n'
         "chunk_index: 2\n---\n\n"
         + "Jump drives require fuel and have operational constraints. " * 30
         + "Gallente ships use Oxygen Isotopes for their jump drives."

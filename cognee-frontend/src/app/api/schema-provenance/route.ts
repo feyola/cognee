@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-
-const localApiUrl = process.env.COGNEE_INTERNAL_API_URL || "http://api:8000";
+import { getServerBackendUrl } from "@/modules/config/serverRuntimeConfig";
 
 // Proxies the cognee /v1/schema/provenance HTML view (memory-provenance graph:
 // Tenant -> User -> Agent -> Brain -> File -> memory) so it can be embedded in
 // an iframe. Mirrors the /api/visualize proxy and forwards caller auth.
 export async function GET(request: NextRequest) {
+  const localApiUrl = getServerBackendUrl();
   const headers: Record<string, string> = {};
   const cookie = request.headers.get("cookie");
   if (cookie) headers["cookie"] = cookie;

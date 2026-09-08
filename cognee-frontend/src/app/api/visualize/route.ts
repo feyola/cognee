@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-
-const localApiUrl = process.env.COGNEE_INTERNAL_API_URL || "http://api:8000";
+import { getServerBackendUrl } from "@/modules/config/serverRuntimeConfig";
 
 export async function GET(request: NextRequest) {
+  const localApiUrl = getServerBackendUrl();
   const datasetId = request.nextUrl.searchParams.get("dataset_id");
   if (!datasetId) {
     return NextResponse.json({ error: "dataset_id required" }, { status: 400 });

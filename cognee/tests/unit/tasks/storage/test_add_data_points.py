@@ -85,6 +85,30 @@ async def test_edge_write_repairs_only_known_batch_endpoints_after_fk_race():
 
 
 @pytest.mark.asyncio
+async def test_edge_repair_reuses_node_ownership_writer():
+    source, target = SimplePoint(text="source"), SimplePoint(text="target")
+    edges = [(str(source.id), str(target.id), "related_to", {})]
+    refs = {(str(source.id), str(target.id), "related_to"): "chunk-owner"}
+    graph_engine = AsyncMock()
+    graph_engine.add_edges.side_effect = [_ForeignKeyViolation(), None]
+    repair_nodes = AsyncMock()
+
+    await _add_edges_with_endpoint_repair(
+        graph_engine,
+        [source, target],
+        edges,
+        source_ref_key=refs,
+        pipeline_run_id="run",
+        repair_nodes=repair_nodes,
+    )
+
+    repair_nodes.assert_awaited_once_with()
+    graph_engine.add_nodes.assert_not_awaited()
+    assert graph_engine.add_edges.await_count == 2
+    assert graph_engine.add_edges.await_args.kwargs["source_ref_key"] == refs
+
+
+@pytest.mark.asyncio
 async def test_edge_write_does_not_repair_an_unknown_endpoint():
     source = SimplePoint(text="source")
     edges = [(str(source.id), str(uuid4()), "related_to", {})]
@@ -155,9 +179,42 @@ async def test_add_data_points_indexes_nodes_and_edges(
     expected_custom_edges = ensure_default_edge_properties(custom_edges, nodes=[dp1, dp2])
     first_call_edges = graph_engine.add_edges.await_args_list[0].args[0]
     assert expected_main_edges[0] in first_call_edges
-    assert expected_custom_edges[0] in first_call_edges
+    assert expected_custom_edges[0] not in first_call_edges, (
+        "custom edges are written in their own call, not the main-edge batch"
+    )
     assert graph_engine.add_edges.await_args_list[1].args[0] == expected_custom_edges
     assert mock_index_edges.await_count == 2
+
+
+@pytest.mark.asyncio
+@patch.object(adp_module, "index_graph_edges")
+@patch.object(adp_module, "index_data_points")
+@patch.object(adp_module, "get_unified_engine")
+@patch.object(adp_module, "deduplicate_nodes_and_edges")
+@patch.object(adp_module, "get_graph_from_model")
+async def test_a_failed_graph_write_indexes_no_vectors(
+    mock_get_graph, mock_dedup, mock_get_unified, mock_index_nodes, mock_index_edges
+):
+    """A vector point whose graph write failed is unreachable, and searchable.
+
+    It carries no source ref, so neither rollback nor delete can ever find it,
+    while CHUNKS retrieval reads the vector collection directly and returns
+    it — content from a failed run, served to users. Writing the graph first
+    makes the failure leave nothing behind; the opposite order (a graph
+    artifact with no vector) keeps its ref and heals.
+    """
+    dp1 = SimplePoint(text="first")
+    mock_get_graph.side_effect = [([dp1], [])]
+    mock_dedup.side_effect = lambda n, e: (n, e)
+    unified, graph_engine, vector_engine = _make_unified_mock()
+    mock_get_unified.return_value = unified
+    graph_engine.add_nodes.side_effect = RuntimeError("graph is down")
+
+    with pytest.raises(RuntimeError):
+        await add_data_points([dp1])
+
+    mock_index_nodes.assert_not_awaited()
+    mock_index_edges.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -207,7 +264,7 @@ async def test_add_data_points_with_empty_list(
 
     assert result == []
     mock_get_graph.assert_not_called()
-    graph_engine.add_nodes.assert_awaited_once_with([], source_ref_key=None, pipeline_run_id=None)
+    graph_engine.add_nodes.assert_not_awaited()  # nothing to write, no empty call
 
 
 @pytest.mark.asyncio
@@ -827,7 +884,8 @@ async def test_add_data_points_with_empty_custom_edges(
     result = await add_data_points([dp], custom_edges=[])
 
     assert result == [dp]
-    assert graph_engine.add_edges.await_count == 1
+    # No edges at all (main empty, custom empty): no edge writes are issued.
+    assert graph_engine.add_edges.await_count == 0
 
 
 @pytest.mark.asyncio

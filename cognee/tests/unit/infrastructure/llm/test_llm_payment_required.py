@@ -3,7 +3,7 @@ Tests that LLMPaymentRequiredError is raised and not retried when an LLM provide
 returns HTTP 402 Payment Required.
 """
 
-import inspect
+from unittest.mock import patch
 
 import pytest
 from pydantic import BaseModel
@@ -91,12 +91,25 @@ async def test_generic_adapter_does_not_wrap_non_402_errors(monkeypatch):
 
     adapter.aclient = FakeClient()
 
-    with pytest.raises(Exception) as exc_info:
-        # This test isolates exception mapping. The production wrapper intentionally retries
-        # ordinary 5xx failures with long exponential waits, which would turn this unit test
-        # into a multi-minute retry-policy test before it can inspect the final exception.
-        unwrapped = inspect.unwrap(GenericAPIAdapter.acreate_structured_output)
-        await unwrapped(adapter, "input", "system", _SimpleModel)
+    # A non-402 error is retried, and the retry policy is
+    # stop_after_attempt(2) & stop_after_delay(240): the AND means the 240s
+    # floor is always paid. Unpatched, this one test ran 250s on every CI
+    # copy of the unit suite. Same fake clock as test_structured_output_retry:
+    # advance a counter by each backoff instead of sleeping.
+    clock = [0.0]
+
+    async def _advancing_sleep(seconds):
+        clock[0] += float(seconds)
+
+    def _fake_monotonic():
+        return clock[0]
+
+    with (
+        patch("asyncio.sleep", _advancing_sleep),
+        patch("time.monotonic", _fake_monotonic),
+        pytest.raises(Exception) as exc_info,
+    ):
+        await adapter.acreate_structured_output("input", "system", _SimpleModel)
 
     assert not isinstance(exc_info.value, LLMPaymentRequiredError)
 

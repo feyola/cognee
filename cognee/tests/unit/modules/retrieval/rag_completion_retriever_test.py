@@ -61,8 +61,8 @@ async def test_answer_context_groups_supporting_chunks_by_selected_page(mock_hyb
         item.payload = {"text": (f'---\ntitle: "{title}"\ncanonical_url: "{url}"\n---\n\n{body}')}
         return item
 
-    trading_url = "https://wiki.eveuniversity.org/Trading"
-    tax_url = "https://wiki.eveuniversity.org/Tax"
+    trading_url = "https://docs.example.org/Trading"
+    tax_url = "https://docs.example.org/Tax"
     trading_overview = result("Trading", trading_url, "Station trading overview")
     tax = result("Tax", tax_url, "Rounded tax summary")
     trading_rate = result("Trading", trading_url, "Precise current rate")
