@@ -1,12 +1,13 @@
-import pytest
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
+from cognee.infrastructure.databases.vector.exceptions import CollectionNotFoundError
 from cognee.modules.retrieval.completion_retriever import (
     CURRENTNESS_GUIDANCE,
     CompletionRetriever,
 )
 from cognee.modules.retrieval.exceptions.exceptions import NoDataError
-from cognee.infrastructure.databases.vector.exceptions import CollectionNotFoundError
 
 
 def test_currentness_guidance_preserves_precise_numeric_evidence():
@@ -82,7 +83,13 @@ async def test_get_context_collection_not_found_error(mock_hybrid_retriever):
 
     retriever = CompletionRetriever()
 
-    with pytest.raises(NoDataError, match="No data found"):
+    with (
+        patch(
+            "cognee.modules.retrieval.completion_retriever.get_vector_engine_async",
+            return_value=mock_vector_engine,
+        ),
+        pytest.raises(NoDataError, match="No data found"),
+    ):
         await retriever.get_retrieved_objects("test query")
 
 
@@ -163,7 +170,7 @@ async def test_get_completion_without_session(mock_vector_engine):
         mock_config.caching = False
         mock_cache_config.return_value = mock_config
 
-        completion = await retriever.get_completion_from_context("test query", None, "")
+        completion = await retriever.get_completion_from_context("test query", None, "test context")
 
     assert isinstance(completion, list)
     assert len(completion) == 1
@@ -256,7 +263,7 @@ async def test_get_completion_with_session_no_user_id(mock_vector_engine):
         mock_cache_config.return_value = mock_config
         mock_session_user.get.return_value = None  # No user
 
-        completion = await retriever.get_completion_from_context("test query", None, "")
+        completion = await retriever.get_completion_from_context("test query", None, "test context")
 
     assert isinstance(completion, list)
     assert len(completion) == 1
@@ -287,7 +294,7 @@ async def test_get_completion_with_response_model(mock_vector_engine):
         mock_config.caching = False
         mock_cache_config.return_value = mock_config
 
-        completion = await retriever.get_completion_from_context("test query", None, None)
+        completion = await retriever.get_completion_from_context("test query", None, "Chunk text")
 
     assert isinstance(completion, list)
     assert len(completion) == 1
@@ -364,5 +371,13 @@ async def test_get_context_missing_text_key(mock_vector_engine):
 
     retriever = CompletionRetriever()
 
-    with pytest.raises(KeyError):
-        await retriever.get_context_from_objects("test query", [mock_result])
+    with (
+        patch(
+            "cognee.modules.retrieval.completion_retriever.get_vector_engine_async",
+            return_value=mock_vector_engine,
+        ),
+        pytest.raises(KeyError),
+    ):
+        objects = await retriever.get_retrieved_objects("test query")
+        context = await retriever.get_context_from_objects("test query", objects)
+        await retriever.get_completion_from_context("test query", objects, context)

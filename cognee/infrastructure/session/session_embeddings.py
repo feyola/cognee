@@ -114,7 +114,7 @@ async def index_session_qa(
         )
         await index_data_points([point])
     except Exception as error:
-        logger.warning("Session QA vector indexing failed open: %s", error)
+        logger.warning("Session QA vector indexing failed open: %s", error, exc_info=True)
 
 
 async def search_session_qa_ids(
@@ -143,7 +143,7 @@ async def search_session_qa_ids(
         logger.debug("Session QA vector collection is not initialized yet.")
         return []
     except Exception as error:
-        logger.warning("Session QA vector search failed open: %s", error)
+        logger.warning("Session QA vector search failed open: %s", error, exc_info=True)
         return []
 
     return [str(result.id) for result in results or [] if getattr(result, "id", None) is not None]
@@ -157,7 +157,7 @@ async def delete_session_qa_vector(*, qa_id: str) -> None:
         vector_engine = await get_vector_engine_async()
         await vector_engine.delete_data_points(SESSION_QA_VECTOR_COLLECTION, [UUID(qa_id)])
     except Exception as error:
-        logger.warning("Session QA vector delete failed open: %s", error)
+        logger.warning("Session QA vector delete failed open: %s", error, exc_info=True)
 
 
 async def delete_session_qa_vectors(*, user_id: str, session_id: str) -> None:
@@ -170,4 +170,4 @@ async def delete_session_qa_vectors(*, user_id: str, session_id: str) -> None:
             [session_scope_tag(user_id, session_id)],
         )
     except Exception as error:
-        logger.warning("Session QA vector session cleanup failed open: %s", error)
+        logger.warning("Session QA vector session cleanup failed open: %s", error, exc_info=True)

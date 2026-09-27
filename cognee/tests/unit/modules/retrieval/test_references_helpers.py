@@ -17,7 +17,6 @@ from cognee.modules.retrieval.utils.references import (
     format_chunk_references,
 )
 
-
 # ---------------------------------------------------------------------------
 # format_chunk_references (no answer: legacy retrieval-order behavior)
 # ---------------------------------------------------------------------------

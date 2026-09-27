@@ -21,7 +21,7 @@ when there is nothing usable, and never raise on backend failures.
 
 import re
 from collections import Counter
-from typing import Any, List, Optional, Set, Tuple
+from typing import Any, Optional, Set
 
 from cognee.context_global_variables import current_dataset_id
 from cognee.infrastructure.databases.vector.embeddings.compact_text import (
@@ -73,17 +73,122 @@ def _is_provenance_banner(line: str) -> bool:
 
 # Common English words excluded from answer/chunk term overlap scoring.
 _STOPWORDS = frozenset(
-    """
-    a about above after again all also an and any are as at be because been
-    before being below between both but by can did do does doing down during
-    each few for from further had has have having he her here hers him his how
-    i if in into is it its just me more most my no nor not of off on once only
-    or other our ours out over own same she should so some such than that the
-    their theirs them then there these they this those through to too under
-    until up very was we were what when where which while who whom why will
-    with you your yours
-    nodes edges source target relationship description notes id type name
-    """.split()
+    [
+        "a",
+        "about",
+        "above",
+        "after",
+        "again",
+        "all",
+        "also",
+        "an",
+        "and",
+        "any",
+        "are",
+        "as",
+        "at",
+        "be",
+        "because",
+        "been",
+        "before",
+        "being",
+        "below",
+        "between",
+        "both",
+        "but",
+        "by",
+        "can",
+        "did",
+        "do",
+        "does",
+        "doing",
+        "down",
+        "during",
+        "each",
+        "few",
+        "for",
+        "from",
+        "further",
+        "had",
+        "has",
+        "have",
+        "having",
+        "he",
+        "her",
+        "here",
+        "hers",
+        "him",
+        "his",
+        "how",
+        "i",
+        "if",
+        "in",
+        "into",
+        "is",
+        "it",
+        "its",
+        "just",
+        "me",
+        "more",
+        "most",
+        "my",
+        "no",
+        "nor",
+        "not",
+        "of",
+        "off",
+        "on",
+        "once",
+        "only",
+        "or",
+        "other",
+        "our",
+        "ours",
+        "out",
+        "over",
+        "own",
+        "same",
+        "she",
+        "should",
+        "so",
+        "some",
+        "such",
+        "than",
+        "that",
+        "the",
+        "their",
+        "theirs",
+        "them",
+        "then",
+        "there",
+        "these",
+        "they",
+        "this",
+        "those",
+        "through",
+        "to",
+        "too",
+        "under",
+        "until",
+        "up",
+        "very",
+        "was",
+        "we",
+        "were",
+        "what",
+        "when",
+        "where",
+        "which",
+        "while",
+        "who",
+        "whom",
+        "why",
+        "will",
+        "with",
+        "you",
+        "your",
+        "yours",
+    ]
 )
 
 
@@ -135,7 +240,7 @@ def _clamp_limit(limit: int) -> int:
     return limit
 
 
-def _clean_str(value: Any) -> Optional[str]:
+def _clean_str(value: Any) -> str | None:
     """Return a stripped string, or None if the value is unusable.
 
     Missing, null, non-string, or empty/whitespace-only values are treated as
@@ -232,7 +337,7 @@ def _snippet(
     return excerpt
 
 
-def _chunk_number(payload: dict) -> Optional[int]:
+def _chunk_number(payload: dict) -> int | None:
     """Resolve the 1-based display number from payload.
 
     Prefers an explicit ``chunk_number`` if present; otherwise derives it from
@@ -254,7 +359,7 @@ def _chunk_number(payload: dict) -> Optional[int]:
     return None
 
 
-def _get_payload(obj: Any) -> Optional[dict]:
+def _get_payload(obj: Any) -> dict | None:
     """Extract a payload dict from a retrieved object.
 
     Retrieved objects are ``ScoredResult`` instances exposing ``.payload`` as a
@@ -276,13 +381,13 @@ def _get_payload(obj: Any) -> Optional[dict]:
 
 
 def _provenance_suffix(
-    source_id: Optional[str],
-    data_id: Optional[str],
-    chunk_id: Optional[str],
-    dataset_id: Optional[str],
+    source_id: str | None,
+    data_id: str | None,
+    chunk_id: str | None,
+    dataset_id: str | None,
     node_sets: tuple[str, ...],
 ) -> str:
-    """Render source, ingested-data, and internal-chunk identities when available.
+    """Render a '(data_id: …, chunk_id: …)' annotation for whichever ids exist.
 
     Lets a reader map the citation back to the ingested data item and the exact
     cited chunk, instead of only a (possibly auto-generated) document name and a
@@ -302,7 +407,7 @@ def _provenance_suffix(
     return f" ({', '.join(parts)})" if parts else ""
 
 
-def _dataset_provenance(payload: dict) -> tuple[Optional[str], tuple[str, ...]]:
+def _dataset_provenance(payload: dict) -> tuple[str | None, tuple[str, ...]]:
     """Resolve the request dataset and exact node-set memberships for a chunk."""
     dataset_id = _clean_str(payload.get("dataset_id"))
     if dataset_id is None:
@@ -314,13 +419,15 @@ def _dataset_provenance(payload: dict) -> tuple[Optional[str], tuple[str, ...]]:
     if isinstance(raw_node_sets, str):
         node_sets = (raw_node_sets.strip(),) if raw_node_sets.strip() else ()
     elif isinstance(raw_node_sets, (list, tuple, set)):
-        node_sets = tuple(sorted({str(value).strip() for value in raw_node_sets if str(value).strip()}))
+        node_sets = tuple(
+            sorted({str(value).strip() for value in raw_node_sets if str(value).strip()})
+        )
     else:
         node_sets = ()
     return dataset_id, node_sets
 
 
-def _chunk_id(obj: Any, payload: dict) -> Optional[str]:
+def _chunk_id(obj: Any, payload: dict) -> str | None:
     """Resolve a stable chunk id for dedup, preferring the object id."""
     obj_id = getattr(obj, "id", None)
     if obj_id is not None:
@@ -333,14 +440,14 @@ def _chunk_id(obj: Any, payload: dict) -> Optional[str]:
     return None
 
 
-def _significant_terms(text: str) -> Set[str]:
+def _significant_terms(text: str) -> set[str]:
     """Lowercased alphanumeric terms of an answer, minus stopwords and stubs."""
     tokens = re.findall(r"[a-z0-9]+", text.lower())
     return {token for token in tokens if len(token) >= 3 and token not in _STOPWORDS}
 
 
 def format_chunk_references(
-    retrieved_objects: Any, answer: Optional[str] = None, limit: int = 5
+    retrieved_objects: Any, answer: str | None = None, limit: int = 5
 ) -> str:
     """Build an Evidence block from retrieved vector payloads, grounded in the answer.
 
@@ -380,9 +487,7 @@ def format_chunk_references(
     except TypeError:
         return ""
 
-    answer_terms: Optional[Set[str]] = None
-    answer_term_weights: Optional[dict[str, float]] = None
-    answer_phrases: Optional[Set[str]] = None
+    answer_terms: set[str] | None = None
     if answer is not None:
         answer_term_weights = _significant_term_weights(answer)
         answer_terms = set(answer_term_weights)
@@ -392,22 +497,8 @@ def format_chunk_references(
             # rather than presenting unverifiable retrieval order as provenance.
             return ""
 
-    # (overlap, name, URL, source index, fallback number, body, provenance ids).
-    candidates: List[
-        Tuple[
-            float,
-            str,
-            Optional[str],
-            Optional[int],
-            int,
-            str,
-            Optional[str],
-            Optional[str],
-            Optional[str],
-            Optional[str],
-            tuple[str, ...],
-        ]
-    ] = []
+    # (overlap_score, document_name, number, text, data_id, chunk_id) per candidate.
+    candidates: list[tuple[int, str, int, str, str | None, str | None]] = []
     seen: set = set()
 
     for obj in iterator:
@@ -594,15 +685,15 @@ async def build_answer_grounded_chunk_references(
             include_payload=True,
         )
     except Exception as error:
-        logger.debug(f"Answer-grounded chunk search failed: {error}")
+        logger.debug(f"Answer-grounded chunk search failed: {error}", exc_info=True)
         return ""
 
     return format_chunk_references(found_chunks, answer=cleaned_answer, limit=limit)
 
 
 def append_chunk_evidence(
-    completions: List[Any], retrieved_objects: Any, enabled: bool
-) -> List[Any]:
+    completions: list[Any], retrieved_objects: Any, enabled: bool
+) -> list[Any]:
     """Append an answer-grounded chunk Evidence block to string completions.
 
     Each string completion gets its own Evidence block, filtered and ranked by
@@ -613,7 +704,7 @@ def append_chunk_evidence(
     if not enabled:
         return completions
 
-    appended: List[Any] = []
+    appended: list[Any] = []
     for completion in completions:
         if not isinstance(completion, str):
             appended.append(completion)
@@ -623,7 +714,7 @@ def append_chunk_evidence(
     return appended
 
 
-async def append_answer_grounded_evidence(completions: List[Any], enabled: bool) -> List[Any]:
+async def append_answer_grounded_evidence(completions: list[Any], enabled: bool) -> list[Any]:
     """Append an answer-grounded Evidence block to string completions.
 
     Each string completion is run as a vector query against the chunk index
@@ -638,10 +729,10 @@ async def append_answer_grounded_evidence(completions: List[Any], enabled: bool)
 
         vector_engine = await get_vector_engine_async()
     except Exception as error:
-        logger.debug(f"Unable to obtain vector engine for references: {error}")
+        logger.debug(f"Unable to obtain vector engine for references: {error}", exc_info=True)
         return completions
 
-    appended: List[Any] = []
+    appended: list[Any] = []
     for completion in completions:
         if not isinstance(completion, str):
             appended.append(completion)

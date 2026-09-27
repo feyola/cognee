@@ -1,28 +1,30 @@
-from typing import Any, Dict, List, Optional, Type
+from typing import Any
 
-from cognee.shared.logging_utils import get_logger
-from cognee.infrastructure.databases.vector import get_vector_engine_async
-from cognee.modules.retrieval.utils.completion import generate_completion
-from cognee.modules.retrieval.utils.merge_results import conversational_reserve, merge_ranked
-from cognee.infrastructure.session.get_session_manager import get_session_manager
-from cognee.modules.retrieval.base_retriever import BaseRetriever
-from cognee.modules.retrieval.utils.used_graph_elements import extract_from_scored_results
+from cognee.base_config import get_base_config
 from cognee.context_global_variables import session_user
 from cognee.infrastructure.databases.cache.config import CacheConfig
-from cognee.modules.retrieval.utils.references import append_chunk_evidence
+from cognee.infrastructure.databases.vector import get_vector_engine_async
+from cognee.infrastructure.databases.vector.exceptions import CollectionNotFoundError
+from cognee.infrastructure.session.get_session_manager import get_session_manager
+from cognee.modules.retrieval.base_retriever import BaseRetriever
+from cognee.modules.retrieval.exceptions.exceptions import NoDataError
 from cognee.modules.retrieval.hybrid_chunks_retriever import (
     DEFAULT_CANDIDATE_POOL,
     DEFAULT_MAX_CONTEXT_CHARS,
     HybridChunksRetriever,
 )
+from cognee.modules.retrieval.utils.completion import SessionPrompt, generate_completion
 from cognee.modules.retrieval.utils.chunk_metadata import canonical_page_key
-from cognee.base_config import get_base_config
+from cognee.modules.retrieval.utils.evidence import chunk_context_evidence
+from cognee.modules.retrieval.utils.merge_results import conversational_reserve, merge_ranked
+from cognee.modules.retrieval.utils.references import append_chunk_evidence
+from cognee.modules.retrieval.utils.used_graph_elements import extract_from_scored_results
 from cognee.modules.user_preferences import (
     load_preference_text,
     load_preference_weights,
     personal_factor,
 )
-from cognee.modules.retrieval.utils.evidence import chunk_context_evidence
+from cognee.shared.logging_utils import get_logger
 
 logger = get_logger("CompletionRetriever")
 
@@ -38,8 +40,8 @@ CURRENTNESS_GUIDANCE = (
 
 
 def _stable_sort_by_personal_distance(
-    found_chunks: List[Any], weights: Dict[str, float], influence: float
-) -> List[Any]:
+    found_chunks: list[Any], weights: dict[str, float], influence: float
+) -> list[Any]:
     """Stable re-sort of ScoredResult chunks by personalized distance.
 
     ``score`` is a distance here (lower is better), so a preferred chunk's
@@ -67,8 +69,8 @@ def _stable_sort_by_personal_distance(
 
 
 async def _weights_matching_collection(
-    vector_engine: Any, weights: Dict[str, float], collection_name: str = "DocumentChunk_text"
-) -> Dict[str, float]:
+    vector_engine: Any, weights: dict[str, float], collection_name: str = "DocumentChunk_text"
+) -> dict[str, float]:
     """Keep only the prefers weights whose key is a row in this collection.
 
     Weight keys span every rated node — graph entities included — but only
@@ -81,7 +83,7 @@ async def _weights_matching_collection(
     try:
         rows = await vector_engine.retrieve(collection_name, list(weights))
     except Exception as error:
-        logger.debug("Preference weight collection check failed open: %s", error)
+        logger.debug("Preference weight collection check failed open: %s", error, exc_info=True)
         return weights
 
     present = set()
@@ -98,18 +100,22 @@ async def _weights_matching_collection(
 class CompletionRetriever(BaseRetriever):
     """Retriever for LLM completions over page-diverse hybrid chunk retrieval."""
 
+    # Search is not an LLM gateway: no retrieved chunks means no answer
+    # (SDK-270 / gh #3728).
+    skip_completion_on_empty_context = True
+
     def __init__(
         self,
         user_prompt_path: str = "context_for_question.txt",
         system_prompt_path: str = "answer_simple_question.txt",
-        system_prompt: Optional[str] = None,
-        top_k: Optional[int] = 1,
-        session_id: Optional[str] = None,
-        response_model: Type = str,
+        system_prompt: str | None = None,
+        top_k: int | None = 1,
+        session_id: str | None = None,
+        response_model: type = str,
         include_references: bool = False,
-        node_name: Optional[List[str]] = None,
+        node_name: list[str] | None = None,
         node_name_filter_operator: str = "OR",
-        wide_search_top_k: Optional[int] = 100,
+        wide_search_top_k: int | None = 100,
         candidate_pool_size: int = DEFAULT_CANDIDATE_POOL,
         max_context_chars: int = DEFAULT_MAX_CONTEXT_CHARS,
         max_chunks_per_page: int = 2,
@@ -167,7 +173,7 @@ class CompletionRetriever(BaseRetriever):
             secondary_reserve=conversational_reserve(self.top_k),
         )
 
-    def extract_context_object_ids(self, retrieved_objects: Any) -> Optional[Dict[str, List[str]]]:
+    def extract_context_object_ids(self, retrieved_objects: Any) -> dict[str, list[str]] | None:
         """Extract node_ids from ScoredResult-like list for session QA."""
         if isinstance(retrieved_objects, list) and retrieved_objects:
             return extract_from_scored_results(retrieved_objects)
@@ -194,16 +200,25 @@ class CompletionRetriever(BaseRetriever):
             "response_model": self.response_model,
         }
 
-    async def _generate_completion_without_session(self, query: str, context: str) -> List[Any]:
+    async def _generate_completion_without_session(self, query: str, context: str) -> list[Any]:
         """Generate completion without session; returns list of one completion."""
         kwargs = self._completion_kwargs(context)
+        # Sessionless guidance site: preference text is the guidance layer of the
+        # session prompt, never context. The lookup is memoized per
+        # context; this sessionless path runs retrieval and completion in one
+        # context, so this reuses the get_retrieved_objects read. (Across a
+        # task fan-out that sharing needs warm_preference_cache in the parent
+        # — the ContextVar does not propagate out of gather lanes.) Empty text
+        # is falsy and adds nothing to the prompt. The session path
+        # never reaches this method, so it cannot collide with the session
+        # guidance block, which owns preference rendering on that path.
         preference_text = await load_preference_text()
         completion = await generate_completion(
-            query=query, conversation_history=preference_text, **kwargs
+            query=query, session=SessionPrompt(guidance=preference_text), **kwargs
         )
         return [completion]
 
-    async def append_references(self, completions: List[Any], retrieved_objects: Any) -> List[Any]:
+    async def append_references(self, completions: list[Any], retrieved_objects: Any) -> list[Any]:
         return append_chunk_evidence(
             completions,
             retrieved_objects,
@@ -214,11 +229,38 @@ class CompletionRetriever(BaseRetriever):
         self,
         query: str,
         retrieved_objects: Any,
-        context: Optional[Any] = None,
-        effective_query: Optional[str] = None,
+        context: Any | None = None,
+        effective_query: str | None = None,
         turn_preparation=None,
-    ) -> List[Any]:
-        """Generate an LLM completion from retrieved context."""
+    ) -> list[Any]:
+        """
+        Generates an LLM completion using the context.
+
+        Retrieves context if not provided and generates a completion based on the query and
+        context using an external completion generator.
+
+        Parameters:
+        -----------
+
+            - query (str): The query string to be used for generating a completion.
+            - context (Optional[Any]): Optional pre-fetched context to use for generating the
+              completion; if None, it retrieves the context for the query. (default None)
+            - session_id (Optional[str]): Optional session identifier for caching. If None,
+              defaults to 'default_session'. (default None)
+            - response_model (Type): The Pydantic model type for structured output. (default str)
+
+        Returns:
+        --------
+
+            - Any: The generated completion based on the provided query and context.
+        """
+        if self.skip_completion_on_empty_context and not context:
+            # Empty context must not reach the LLM: search is not an LLM
+            # gateway, and the only possible output is a phantom "no context
+            # provided" deflection (SDK-270 / gh #3728).
+            logger.warning("Empty context: skipping LLM completion, returning no results")
+            return []
+
         cache_config = CacheConfig()
         user = session_user.get()
         user_id = getattr(user, "id", None)

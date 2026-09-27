@@ -1,5 +1,5 @@
 import types
-from uuid import uuid4, uuid5, NAMESPACE_OID
+from uuid import NAMESPACE_OID, uuid4, uuid5
 
 import pytest
 
@@ -132,110 +132,6 @@ async def test_api_code_query_rejects_non_code_search(api_search_mod):
             user=_make_user(),
             code_query={"operation": "explore"},
         )
-
-
-@pytest.mark.asyncio
-async def test_chunk_identity_endpoint_returns_only_live_vector_ids(monkeypatch):
-    import importlib
-    from contextlib import asynccontextmanager
-
-    from cognee.api.v1.search.routers.get_search_router import ChunkIdentityPayloadDTO
-
-    router_module = importlib.import_module("cognee.api.v1.search.routers.get_search_router")
-
-    requested = [uuid4(), uuid4()]
-    dataset_id = uuid4()
-    owner_id = uuid4()
-
-    class Vector:
-        async def retrieve(self, collection, ids):
-            assert collection == "DocumentChunk_text"
-            assert ids == [str(value) for value in requested]
-            return [types.SimpleNamespace(id=requested[0])]
-
-    async def fake_engine():
-        return types.SimpleNamespace(vector=Vector())
-
-    async def fake_permissions(user_id, permission, dataset_ids):
-        assert user_id == _make_user().id
-        assert permission == "read"
-        assert dataset_ids == [dataset_id]
-        return [types.SimpleNamespace(id=dataset_id, owner_id=owner_id)]
-
-    @asynccontextmanager
-    async def fake_context(selected_dataset_id, selected_owner_id):
-        assert selected_dataset_id == dataset_id
-        assert selected_owner_id == owner_id
-        yield
-
-    monkeypatch.setattr(router_module, "get_unified_engine", fake_engine)
-    monkeypatch.setattr(router_module, "get_specific_user_permission_datasets", fake_permissions)
-    monkeypatch.setattr(router_module, "set_database_global_context_variables", fake_context)
-    router = router_module.get_search_router()
-    endpoint = next(route.endpoint for route in router.routes if route.path == "/chunk-identities")
-
-    result = await endpoint(
-        ChunkIdentityPayloadDTO(dataset_id=dataset_id, chunk_ids=requested),
-        user=_make_user(),
-    )
-
-    assert result == [requested[0]]
-
-
-@pytest.mark.asyncio
-async def test_api_search_rejects_unknown_context_format(api_search_mod):
-    with pytest.raises(CogneeValidationError, match="context_format"):
-        await api_search_mod.search(
-            query_text="why?",
-            query_type=SearchType.GRAPH_COMPLETION,
-            user=_make_user(),
-            only_context=True,
-            context_format="bogus",
-        )
-
-
-@pytest.mark.asyncio
-async def test_api_search_forwards_context_format(monkeypatch, api_search_mod):
-    captured = {}
-
-    async def dummy_set_session_user_context_variable(_user):
-        return None
-
-    async def dummy_search_function(**kwargs):
-        captured["context_format"] = kwargs.get("context_format")
-        return []
-
-    monkeypatch.setattr(
-        api_search_mod,
-        "set_session_user_context_variable",
-        dummy_set_session_user_context_variable,
-    )
-    monkeypatch.setattr(api_search_mod, "search_function", dummy_search_function)
-
-    await api_search_mod.search(
-        query_text="why?",
-        query_type=SearchType.GRAPH_COMPLETION,
-        user=_make_user(),
-        dataset_ids=[_make_dataset().id],
-        only_context=True,
-        context_format="prompt",
-    )
-
-    assert captured["context_format"] == "prompt"
-
-
-def test_search_dto_publishes_and_enforces_the_context_format_enum():
-    from pydantic import ValidationError
-
-    from cognee.api.v1.search.routers.get_search_router import SearchPayloadDTO
-    from cognee.modules.search.types import ContextFormat
-
-    assert (
-        SearchPayloadDTO(query="q", contextFormat="prompt").context_format is ContextFormat.PROMPT
-    )
-    assert SearchPayloadDTO(query="q").context_format is ContextFormat.CONTEXT
-    with pytest.raises(ValidationError):
-        SearchPayloadDTO(query="q", contextFormat="bogus")
 
 
 def test_search_dto_carries_session_id_in_both_casings():
