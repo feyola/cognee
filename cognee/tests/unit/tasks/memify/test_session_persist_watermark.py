@@ -164,7 +164,7 @@ async def test_cognify_session_advances_watermark_on_success(user, manager, monk
     user_id = str(user.id)
 
     async def fake_add(*args, **kwargs):
-        return None
+        return SimpleNamespace(data_ingestion_info=[{"data_id": uuid.uuid4()}])
 
     async def fake_cognify(*args, **kwargs):
         return None
@@ -188,7 +188,7 @@ async def test_cognify_session_keeps_watermark_on_failure(user, manager, monkeyp
     user_id = str(user.id)
 
     async def fake_add(*args, **kwargs):
-        return None
+        return SimpleNamespace(data_ingestion_info=[{"data_id": uuid.uuid4()}])
 
     async def failing_cognify(*args, **kwargs):
         raise RuntimeError("LLM exploded")
@@ -209,6 +209,28 @@ async def test_cognify_session_keeps_watermark_on_failure(user, manager, monkeyp
 
 
 @pytest.mark.asyncio
+async def test_later_batch_cannot_skip_failed_earlier_window(user, manager, monkeypatch):
+    calls = []
+
+    async def fake_add(*args, **kwargs):
+        calls.append(args)
+
+    monkeypatch.setattr(cognee, "add", fake_add)
+    later_window = SessionPersistWindow(
+        user_id=str(user.id),
+        session_id=SESSION,
+        text="Question: later\n\nAnswer: later\n\n",
+        persisted_qa_count=4,
+        required_qa_count=2,
+    )
+
+    await cognify_session(later_window, dataset_id=uuid.uuid4(), user=user)
+
+    assert calls == []
+    assert await get_persisted_qa_count(manager, str(user.id), SESSION) == 0
+
+
+@pytest.mark.asyncio
 async def test_multi_run_completeness_without_reingestion(user, manager, monkeypatch):
     """The user-facing guarantee, end to end over three grow->persist cycles:
 
@@ -220,6 +242,7 @@ async def test_multi_run_completeness_without_reingestion(user, manager, monkeyp
 
     async def fake_add(text, *args, **kwargs):
         ingested_texts.append(text)
+        return SimpleNamespace(data_ingestion_info=[{"data_id": uuid.uuid4()}])
 
     async def fake_cognify(*args, **kwargs):
         return None

@@ -6,10 +6,33 @@ import pytest
 from cognee.exceptions import CogneeSystemError
 from cognee.infrastructure.databases.cache.models import SessionQAEntry
 from cognee.modules.users.models import User
-from cognee.tasks.memify.extract_user_sessions import extract_user_sessions
+from cognee.tasks.memify.extract_user_sessions import (
+    SESSION_WINDOW_MAX_CHARS,
+    _session_windows,
+    extract_user_sessions,
+)
 
 # Get the actual module object (not the function) for patching
 extract_user_sessions_module = sys.modules["cognee.tasks.memify.extract_user_sessions"]
+
+
+def test_session_windows_are_bounded_and_ordered():
+    entries = [SessionQAEntry(question=str(i), context="", answer="x" * 4000, time="") for i in range(12)]
+    windows = list(_session_windows("user", "session", entries, 0))
+    assert len(windows) > 1
+    assert all(len(window.text) <= SESSION_WINDOW_MAX_CHARS for window in windows)
+    assert windows[-1].persisted_qa_count == len(entries)
+    assert windows[0].required_qa_count == 0
+    assert all(
+        earlier.persisted_qa_count == later.required_qa_count
+        for earlier, later in zip(windows, windows[1:])
+    )
+
+
+def test_oversized_single_qa_fails_without_silent_truncation():
+    entry = SessionQAEntry(question="q", context="", answer="x" * 40000, time="")
+    with pytest.raises(CogneeSystemError, match="exceeds"):
+        list(_session_windows("user", "session", [entry], 0))
 
 
 @pytest.fixture

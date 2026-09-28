@@ -200,15 +200,18 @@ class SessionPersistWindow:
     """One not-yet-persisted slice of a session's Q&A entries.
 
     ``persisted_qa_count`` is the TOTAL entry count captured at extraction
-    time — the value the watermark advances to once this window is
-    successfully cognified. Entries appended after extraction stay above it
-    and are picked up by the next run.
+    time through this slice — the value the watermark advances to once this
+    window is successfully cognified. ``required_qa_count`` prevents a later
+    slice from advancing past an earlier failed slice, including across
+    pipeline batches. Entries appended after extraction stay above the final
+    watermark and are picked up by the next run.
     """
 
     user_id: str
     session_id: str
     text: str
     persisted_qa_count: int
+    required_qa_count: int = 0
 
 
 async def get_persisted_qa_count(session_manager, user_id: str, session_id: str) -> int:
