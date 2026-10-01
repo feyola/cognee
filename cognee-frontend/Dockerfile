@@ -34,6 +34,15 @@ COPY . .
 ENV NEXT_PUBLIC_IS_CLOUD_ENVIRONMENT=false
 ENV NEXT_TELEMETRY_DISABLED=1
 
+# Retain the self-hosted same-origin build contract. Runtime backend config
+# continues to take precedence when supplied by an upstream-style deployment.
+ARG NEXT_PUBLIC_LOCAL_API_URL=
+ARG NEXT_PUBLIC_BACKEND_API_URL=
+ARG NEXT_PUBLIC_DEFAULT_USER_EMAIL=
+ENV NEXT_PUBLIC_LOCAL_API_URL=${NEXT_PUBLIC_LOCAL_API_URL}
+ENV NEXT_PUBLIC_BACKEND_API_URL=${NEXT_PUBLIC_BACKEND_API_URL}
+ENV NEXT_PUBLIC_DEFAULT_USER_EMAIL=${NEXT_PUBLIC_DEFAULT_USER_EMAIL}
+
 RUN npm run build
 
 # ----------------------------------------------------------------- dev ------

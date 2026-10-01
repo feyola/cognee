@@ -109,6 +109,7 @@ def raise_if_cognify_errored(result) -> None:
 
 async def cognify(
     datasets: str | list[str] | list[UUID] | None = None,
+    data_ids: list[UUID] | None = None,
     user: User = None,
     graph_model: BaseModel = KnowledgeGraph,
     chunker=TextChunker,
@@ -176,6 +177,9 @@ async def cognify(
             - Single dataset: "my_dataset"
             - Multiple datasets: ["docs", "research", "reports"]
             - None: Process all datasets for the user
+        data_ids: Optional IDs of existing data items to process within exactly one
+            authorized dataset. An invalid or missing ID raises instead of falling
+            back to a dataset-wide run. Not supported in remote or dry-run mode.
         user: User context for authentication and data access. Uses default if None.
         graph_model: Pydantic model defining the knowledge graph structure.
                     Defaults to KnowledgeGraph for general-purpose processing.
@@ -314,6 +318,15 @@ async def cognify(
         - LLM_RATE_LIMIT_ENABLED: Enable rate limiting (default: False)
         - LLM_RATE_LIMIT_REQUESTS: Max requests per interval (default: 60)
     """
+    if data_ids is not None:
+        if not data_ids or datasets is None:
+            raise ValueError("data_ids requires a non-empty list and one dataset.")
+        dataset_specs = [datasets] if isinstance(datasets, (str, UUID)) else datasets
+        if len(dataset_specs) != 1:
+            raise ValueError("data_ids requires exactly one dataset.")
+        if dry_run:
+            raise ValueError("data_ids is not supported with dry_run.")
+
     cognify_config = get_cognify_config()
     # The extractor decision is made once, here, before any branch. Branches
     # that cannot honour it raise below instead of silently running something
@@ -354,6 +367,10 @@ async def cognify(
 
     client = get_remote_client()
     if client is not None:
+        if data_ids is not None:
+            raise ValueError(
+                "data_ids is not supported while connected to a remote Cognee instance."
+            )
         if chunk_attachment is not None:
             raise ValueError(
                 "chunk_attachment is not supported while connected to a remote Cognee "
@@ -475,6 +492,39 @@ async def cognify(
         # By calling get pipeline executor we get a function that will have the run_pipeline run in the background or a function that we will need to wait for
         pipeline_executor_func = get_pipeline_executor(run_in_background=run_in_background)
 
+        selected_data = None
+        if data_ids is not None:
+            # A scoped run is deliberately limited to one authorized dataset.
+            # In particular, an unknown id must not silently fall back to
+            # processing the whole dataset (run_pipeline does that for []).
+            from sqlalchemy import select
+
+            from cognee.infrastructure.databases.relational import get_relational_engine
+            from cognee.modules.data.models import Data
+            from cognee.modules.pipelines.layers.resolve_authorized_user_datasets import (
+                resolve_authorized_user_datasets,
+            )
+
+            _, authorized_datasets = await resolve_authorized_user_datasets(datasets, user)
+            if len(authorized_datasets) != 1:
+                raise ValueError("data_ids requires exactly one authorized dataset.")
+            dataset_id = authorized_datasets[0].id
+            requested_ids = {UUID(str(data_id)) for data_id in data_ids}
+            async with get_relational_engine().get_async_session() as session:
+                selected_data = list(
+                    (
+                        await session.execute(
+                            select(Data).where(
+                                Data.dataset_id == dataset_id, Data.id.in_(requested_ids)
+                            )
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+            if {item.id for item in selected_data} != requested_ids:
+                raise ValueError("One or more data_ids are not in the authorized dataset.")
+
         # Per-item routing: each data item resolves to the task list its kind
         # requires — DLT-source manifests run the deterministic DLT list, code
         # files run the enola code graph list, everything else runs the
@@ -511,6 +561,7 @@ async def cognify(
             result = await pipeline_executor_func(
                 pipeline=run_pipeline,
                 datasets=datasets,
+                data=selected_data,
                 tasks=resolve_cognify_tasks,
                 pipeline_name="cognify_pipeline",
                 user=user,

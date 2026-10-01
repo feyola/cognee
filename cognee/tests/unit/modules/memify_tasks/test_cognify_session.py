@@ -1,5 +1,7 @@
 import sys
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import uuid4
 
 import pytest
 
@@ -9,6 +11,11 @@ from cognee.tasks.memify.cognify_session import cognify_session
 
 # Get the actual module object (not the function) for patching
 cognify_session_module = sys.modules["cognee.tasks.memify.cognify_session"]
+DATA_ID = uuid4()
+
+
+def _add_result():
+    return SimpleNamespace(data_ingestion_info=[{"data_id": DATA_ID}])
 
 
 def _window(text: str, persisted_qa_count: int = 1) -> SessionPersistWindow:
@@ -22,6 +29,7 @@ def _window(text: str, persisted_qa_count: int = 1) -> SessionPersistWindow:
 
 def _mock_session_manager():
     mock_sm = MagicMock()
+    mock_sm.get_session_context_entries = AsyncMock(return_value=[])
     mock_sm.update_session_context_entry = AsyncMock(return_value=True)
     mock_sm.create_session_context_entry = AsyncMock(return_value=True)
     return mock_sm
@@ -41,6 +49,7 @@ async def test_cognify_session_success():
         patch("cognee.cognify", new_callable=AsyncMock) as mock_cognify,
         patch.object(cognify_session_module, "get_session_manager", return_value=mock_sm),
     ):
+        mock_add.return_value = _add_result()
         await cognify_session(window, dataset_id="123")
 
         mock_add.assert_called_once_with(
@@ -49,7 +58,9 @@ async def test_cognify_session_success():
             node_set=["user_sessions_from_cache"],
             user=None,
         )
-        mock_cognify.assert_called_once_with(datasets=["123"], user=None, raise_on_error=False)
+        mock_cognify.assert_called_once_with(
+            datasets=["123"], data_ids=[DATA_ID], user=None, raise_on_error=False
+        )
         # Watermark advanced after successful cognify.
         mock_sm.update_session_context_entry.assert_called_once()
 
@@ -68,6 +79,7 @@ async def test_cognify_session_accepts_batched_windows():
         patch("cognee.cognify", new_callable=AsyncMock) as mock_cognify,
         patch.object(cognify_session_module, "get_session_manager", return_value=mock_sm),
     ):
+        mock_add.return_value = _add_result()
         await cognify_session(windows, dataset_id="123")
 
         assert mock_add.call_count == 2
@@ -127,10 +139,11 @@ async def test_cognify_session_cognify_failure():
     mock_sm = _mock_session_manager()
 
     with (
-        patch("cognee.add", new_callable=AsyncMock),
+        patch("cognee.add", new_callable=AsyncMock) as mock_add,
         patch("cognee.cognify", new_callable=AsyncMock) as mock_cognify,
         patch.object(cognify_session_module, "get_session_manager", return_value=mock_sm),
     ):
+        mock_add.return_value = _add_result()
         mock_cognify.side_effect = Exception("Cognify operation failed")
 
         with pytest.raises(CogneeSystemError) as exc_info:
@@ -143,9 +156,8 @@ async def test_cognify_session_cognify_failure():
 
 
 @pytest.mark.asyncio
-async def test_cognify_session_errored_run_info_skips_watermark_and_continues():
-    """A window whose build errored (raise_on_error=False path) is skipped:
-    no watermark advance, no raise, remaining windows still processed."""
+async def test_cognify_session_errored_run_info_skips_later_same_session_windows():
+    """A failed slice must not let a later slice advance the session watermark."""
     from uuid import uuid4
 
     from cognee.modules.pipelines.models.PipelineRunInfo import (
@@ -166,17 +178,17 @@ async def test_cognify_session_errored_run_info_skips_watermark_and_continues():
     completed = PipelineRunCompleted(**common)
 
     with (
-        patch("cognee.add", new_callable=AsyncMock),
+        patch("cognee.add", new_callable=AsyncMock) as mock_add,
         patch("cognee.cognify", new_callable=AsyncMock) as mock_cognify,
         patch.object(cognify_session_module, "get_session_manager", return_value=mock_sm),
     ):
+        mock_add.return_value = _add_result()
         mock_cognify.side_effect = [{"ds": errored}, {"ds": completed}]
 
         await cognify_session(windows, dataset_id="123")
 
-        assert mock_cognify.call_count == 2
-        # Only the second (successful) window advanced its watermark.
-        mock_sm.update_session_context_entry.assert_called_once()
+        assert mock_cognify.call_count == 1
+        mock_sm.update_session_context_entry.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -197,6 +209,7 @@ async def test_cognify_session_with_special_characters():
         patch("cognee.cognify", new_callable=AsyncMock) as mock_cognify,
         patch.object(cognify_session_module, "get_session_manager", return_value=mock_sm),
     ):
+        mock_add.return_value = _add_result()
         await cognify_session(window, dataset_id="123")
 
         mock_add.assert_called_once_with(
@@ -205,7 +218,9 @@ async def test_cognify_session_with_special_characters():
             node_set=["user_sessions_from_cache"],
             user=None,
         )
-        mock_cognify.assert_called_once_with(datasets=["123"], user=None, raise_on_error=False)
+        mock_cognify.assert_called_once_with(
+            datasets=["123"], data_ids=[DATA_ID], user=None, raise_on_error=False
+        )
 
 
 @pytest.mark.asyncio
@@ -222,6 +237,7 @@ async def test_cognify_session_passes_user_to_add_and_cognify():
         patch("cognee.cognify", new_callable=AsyncMock) as mock_cognify,
         patch.object(cognify_session_module, "get_session_manager", return_value=mock_sm),
     ):
+        mock_add.return_value = _add_result()
         await cognify_session(window, dataset_id="123", user=user)
 
         mock_add.assert_called_once_with(
@@ -230,4 +246,6 @@ async def test_cognify_session_passes_user_to_add_and_cognify():
             node_set=["user_sessions_from_cache"],
             user=user,
         )
-        mock_cognify.assert_called_once_with(datasets=["123"], user=user, raise_on_error=False)
+        mock_cognify.assert_called_once_with(
+            datasets=["123"], data_ids=[DATA_ID], user=user, raise_on_error=False
+        )

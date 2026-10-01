@@ -5,6 +5,7 @@ from cognee.exceptions import CogneeSystemError, CogneeValidationError
 from cognee.infrastructure.session.get_session_manager import get_session_manager
 from cognee.infrastructure.session.session_persist_watermark import (
     SessionPersistWindow,
+    get_persisted_qa_count,
     save_persisted_qa_count,
 )
 from cognee.modules.improve.constants import USER_SESSIONS_NODE_SET
@@ -51,30 +52,62 @@ async def cognify_session(
         logger.warning("No session windows provided to cognify_session task, skipping")
         raise CogneeValidationError(message="Session window cannot be empty", log=False)
 
+    failed_sessions: set[str] = set()
     try:
         for window in valid_windows:
+            if window.session_id in failed_sessions:
+                # Later windows from the same session depend on this one. Do
+                # not advance the watermark past a failed earlier slice.
+                continue
+            current_count = await get_persisted_qa_count(
+                get_session_manager(), window.user_id, window.session_id
+            )
+            if current_count < window.required_qa_count:
+                logger.warning(
+                    "Skipping session %s window: prerequisite watermark %d not reached (%d)",
+                    window.session_id,
+                    window.required_qa_count,
+                    current_count,
+                )
+                failed_sessions.add(window.session_id)
+                continue
             logger.info(
                 "Processing session %s window (%d entries persisted after this) for cognification",
                 window.session_id,
                 window.persisted_qa_count,
             )
 
-            await cognee.add(
+            add_result = await cognee.add(
                 window.text,
                 dataset_id=dataset_id,
                 node_set=[USER_SESSIONS_NODE_SET],
                 user=user,
             )
+            errored_add = get_errored_run_info(add_result)
+            if errored_add is not None:
+                raise CogneeSystemError(
+                    message=f"Session add failed: {errored_add.error_class}: {errored_add.error_message}",
+                    log=False,
+                )
+            ingested_items = getattr(add_result, "data_ingestion_info", None) or []
+            data_ids = {item.get("data_id") for item in ingested_items if isinstance(item, dict)}
+            data_ids.discard(None)
+            if len(data_ids) != 1:
+                raise CogneeSystemError(
+                    message="Session add did not return exactly one data id; refusing dataset-wide cognify",
+                    log=False,
+                )
             logger.debug("Session data added to cognee with node_set: %s", USER_SESSIONS_NODE_SET)
             # raise_on_error=False: one window's failed build must not kill the
             # whole memify run — inspect the run info instead, keep this
             # window's watermark put (so it is re-extracted and retried on the
-            # next improve()), and continue with the remaining windows.
+            # next improve()), and continue with other sessions only.
             cognify_result = await cognee.cognify(
-                datasets=[dataset_id], user=user, raise_on_error=False
+                datasets=[dataset_id], data_ids=list(data_ids), user=user, raise_on_error=False
             )
             errored_run = get_errored_run_info(cognify_result)
             if errored_run is not None:
+                failed_sessions.add(window.session_id)
                 logger.error(
                     "Cognify failed for session %s window (%s: %s); watermark not advanced, "
                     "window will be retried on the next improve()",

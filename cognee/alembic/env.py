@@ -12,6 +12,7 @@ import cognee.modules.provenance.edge_evidence.models
 import cognee.modules.provenance.models
 import cognee.modules.session_lifecycle.models
 from cognee.infrastructure.databases.relational import Base, get_relational_engine
+from cognee.modules.migrations.url import render_database_url_for_logging
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
@@ -101,8 +102,12 @@ db_engine = config.attributes.get("relational_engine") or get_relational_engine(
 # names the s3:// path, which aiosqlite cannot open). The live engine's URL
 # always points at the real connection target on every backend.
 db_uri = db_engine.engine.url.render_as_string(hide_password=False)
+safe_db_uri = render_database_url_for_logging(db_engine.engine.url)
 
-logging.getLogger("alembic.env").info("Using database: %s", db_uri)
+# Alembic needs the real URI below, but logs must never receive database
+# credentials. SQLAlchemy's redacted rendering preserves enough connection
+# detail to diagnose routing mistakes without exposing the password.
+logging.getLogger("alembic.env").info("Using database: %s", safe_db_uri)
 
 config.set_section_option(
     config.config_ini_section,

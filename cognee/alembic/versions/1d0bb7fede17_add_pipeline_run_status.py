@@ -7,6 +7,7 @@ Create Date: 2025-05-19 10:58:15.993314
 
 from collections.abc import Sequence
 
+import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
@@ -17,10 +18,15 @@ depends_on: str | Sequence[str] | None = "482cd6517ce4"
 
 
 def upgrade() -> None:
-    # The dialect of the database being migrated (op.get_bind()), never of the
-    # globally configured engine: an adapter's create_database() runs this chain
-    # on ITS database, which may not be the configured one.
-    if op.get_bind().dialect.name == "postgresql":
+    bind = op.get_bind()
+
+    if bind.dialect.name == "postgresql":
+        type_exists = bind.execute(
+            sa.text("SELECT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'pipelinerunstatus')")
+        ).scalar()
+        if not type_exists:
+            return
+
         op.execute(
             "ALTER TYPE pipelinerunstatus ADD VALUE IF NOT EXISTS 'DATASET_PROCESSING_INITIATED'"
         )

@@ -582,7 +582,9 @@ class PGVectorAdapter(SQLAlchemyAdapter, VectorDBInterface):
                 )
             await session.commit()
 
-    async def retrieve(self, collection_name: str, data_point_ids: list[str]):
+    async def retrieve(
+        self, collection_name: str, data_point_ids: list[str], include_vector: bool = False
+    ):
         """Return rows from `collection_name` matching any of `data_point_ids`."""
         # Get PGVectorDataPoint Table from database
         try:
@@ -609,7 +611,13 @@ class PGVectorAdapter(SQLAlchemyAdapter, VectorDBInterface):
                 unique_results.append(result)
 
             return [
-                ScoredResult(id=parse_id(result.id), payload=result.payload, score=0)
+                ScoredResult(
+                    id=parse_id(result.id),
+                    payload={**(result.payload or {}), "vector": list(result.vector)}
+                    if include_vector
+                    else result.payload,
+                    score=0,
+                )
                 for result in unique_results
             ]
 

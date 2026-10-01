@@ -7,6 +7,7 @@ import { useCogniInstance, useTenant } from "@/modules/tenant/TenantProvider";
 import { useFilter } from "@/ui/layout/FilterContext";
 import { listSessions } from "@/modules/sessions/getSessions";
 import type { SessionRow } from "@/modules/sessions/getSessions";
+import { normalizePipelineRuns } from "@/modules/activity/normalizePipelineRuns";
 import { useCircuitBreaker } from "@/modules/query/useCircuitBreaker";
 import type { PipelineRun, Range } from "@/ui/elements/AgentActivityTerminal";
 
@@ -46,15 +47,7 @@ export function useDashboardTelemetry(range: Range): DashboardTelemetry {
         listSessions(cogniInstance, { range, limit: 50 }, { signal, timeoutMs: BACKGROUND_POLL_TIMEOUT_MS }),
       ]);
       return {
-        // Operation rows (kind: "operation") legitimately carry pipeline_name:
-        // null (recall/search/remember/... aren't named pipelines) — only
-        // reject rows missing the kind discriminator itself, which is the
-        // actual signal of a malformed row (see AgentActivityTerminal.tsx).
-        runs: (Array.isArray(runData) ? runData : []).filter(
-          (r): r is PipelineRun =>
-            (r as { kind?: unknown } | null)?.kind === "pipeline" ||
-            (r as { kind?: unknown } | null)?.kind === "operation",
-        ),
+        runs: normalizePipelineRuns(runData),
         sessions: sessionsPage?.sessions ?? [],
       };
     },

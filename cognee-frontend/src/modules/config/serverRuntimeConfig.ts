@@ -21,6 +21,7 @@ const DEFAULT_BACKEND_URL = "http://localhost:8000";
 /** The backend this server process should call from route handlers. */
 export function getServerBackendUrl(): string {
   return (
+    normalizeBackendUrl(process.env.COGNEE_INTERNAL_API_URL, "COGNEE_INTERNAL_API_URL") ??
     normalizeBackendUrl(process.env.COGNEE_BACKEND_URL, BACKEND_URL_ENV) ??
     normalizeBackendUrl(process.env.NEXT_PUBLIC_LOCAL_API_URL, BUILD_TIME_ENV) ??
     DEFAULT_BACKEND_URL

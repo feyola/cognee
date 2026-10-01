@@ -1,8 +1,13 @@
 """Adapter for Generic API LLM provider API"""
 
+import asyncio
 import base64
 import logging
 import mimetypes
+import os
+from collections.abc import AsyncIterable
+from contextlib import asynccontextmanager
+from copy import deepcopy
 from typing import Any
 
 import instructor
@@ -44,6 +49,34 @@ from cognee.shared.rate_limiting import llm_rate_limiter_context_manager
 
 logger = get_logger()
 observe = get_observe()
+_llm_concurrency_semaphores: dict[tuple[int, int], asyncio.Semaphore] = {}
+
+
+def _get_llm_max_concurrency() -> int:
+    raw_value = os.getenv("COGNEE_LLM_MAX_CONCURRENCY") or os.getenv("LLM_MAX_CONCURRENCY", "0")
+    try:
+        return max(0, int(raw_value))
+    except ValueError:
+        logger.warning("Invalid LLM concurrency limit %r; disabling the limit.", raw_value)
+        return 0
+
+
+@asynccontextmanager
+async def _llm_concurrency_context():
+    max_concurrency = _get_llm_max_concurrency()
+    if max_concurrency <= 0:
+        yield
+        return
+
+    loop = asyncio.get_running_loop()
+    key = (id(loop), max_concurrency)
+    semaphore = _llm_concurrency_semaphores.get(key)
+    if semaphore is None:
+        semaphore = asyncio.Semaphore(max_concurrency)
+        _llm_concurrency_semaphores[key] = semaphore
+
+    async with semaphore:
+        yield
 
 
 def _enrich_llm_span(model: str, name: str) -> None:
@@ -72,6 +105,86 @@ def _enrich_llm_span(model: str, name: str) -> None:
                 current_span.set_attribute(COGNEE_PIPELINE_STAGE, stage)
     except Exception:
         logger.debug("Ignoring exception in _enrich_llm_span", exc_info=True)
+
+
+def _copy_reasoning_content_to_empty_content(response: Any) -> Any:
+    """Expose local-server structured output returned as reasoning content."""
+    try:
+        for choice in response.choices or []:
+            message = getattr(choice, "message", None)
+            if message is None or getattr(message, "content", None):
+                continue
+
+            reasoning_content = getattr(message, "reasoning_content", None)
+            if not reasoning_content:
+                provider_fields = getattr(message, "provider_specific_fields", None) or {}
+                reasoning_content = provider_fields.get("reasoning_content")
+
+            if reasoning_content:
+                message.content = reasoning_content
+    except Exception:
+        logger.debug("Could not normalize reasoning_content response field.", exc_info=True)
+
+    return response
+
+
+async def _materialize_streaming_response(
+    response: Any, *, messages: list[dict[str, Any]] | None = None
+) -> Any:
+    """Combine a LiteLLM async stream into the response expected by Instructor."""
+    if not isinstance(response, AsyncIterable):
+        return response
+
+    chunks = [chunk async for chunk in response]
+    materialized = litellm.stream_chunk_builder(chunks=chunks, messages=messages)
+    if materialized is None:
+        raise RuntimeError("LLM stream completed without response chunks.")
+
+    return materialized
+
+
+def _enforce_strict_json_schema(response_format: Any) -> Any:
+    """Return a strict OpenAI JSON schema without mutating Instructor's input."""
+    if not isinstance(response_format, dict) or response_format.get("type") != "json_schema":
+        return response_format
+
+    strict_response_format = deepcopy(response_format)
+    schema = strict_response_format.get("json_schema", {}).get("schema")
+    if not isinstance(schema, dict):
+        return response_format
+
+    def normalize_schema(value: Any) -> None:
+        if isinstance(value, list):
+            for item in value:
+                normalize_schema(item)
+            return
+        if not isinstance(value, dict):
+            return
+
+        # OpenAI strict structured outputs support anyOf, but reject the
+        # oneOf/discriminator pair emitted for Pydantic discriminated unions.
+        # Literal discriminator fields still make the alternatives exclusive,
+        # and Pydantic validates the materialized response after generation.
+        if "discriminator" in value:
+            if "oneOf" in value:
+                if "anyOf" in value:
+                    raise ValueError(
+                        "Cannot normalize a discriminated union containing both oneOf and anyOf."
+                    )
+                value["anyOf"] = value.pop("oneOf")
+            value.pop("discriminator")
+
+        properties = value.get("properties")
+        if value.get("type") == "object" or isinstance(properties, dict):
+            value["additionalProperties"] = False
+            if isinstance(properties, dict):
+                value["required"] = list(properties)
+
+        for nested_value in value.values():
+            normalize_schema(nested_value)
+
+    normalize_schema(schema)
+    return strict_response_format
 
 
 class GenericAPIAdapter(LLMInterface):
@@ -125,14 +238,25 @@ class GenericAPIAdapter(LLMInterface):
         self.fallback_model = fallback_model
         self.fallback_api_key = fallback_api_key
         self.fallback_endpoint = fallback_endpoint
-        self._base_llm_args: dict[str, Any] = llm_args or {}
+        self._base_llm_args: dict[str, Any] = dict(llm_args or {})
+        self.enforce_strict_json_schema = bool(
+            self._base_llm_args.pop("enforce_strict_json_schema", False)
+        )
         self.llm_args = self._base_llm_args
 
         self.instructor_mode = instructor_mode if instructor_mode else self.default_instructor_mode
 
         self.aclient = instructor.from_litellm(
-            litellm.acompletion, mode=instructor.Mode(self.instructor_mode)
+            self._acompletion_with_reasoning_content_fallback,
+            mode=instructor.Mode(self.instructor_mode),
         )
+
+    async def _acompletion_with_reasoning_content_fallback(self, *args: Any, **kwargs: Any) -> Any:
+        if self.enforce_strict_json_schema and "response_format" in kwargs:
+            kwargs["response_format"] = _enforce_strict_json_schema(kwargs["response_format"])
+        response = await litellm.acompletion(*args, **kwargs)
+        response = await _materialize_streaming_response(response, messages=kwargs.get("messages"))
+        return _copy_reasoning_content_to_empty_content(response)
 
     async def acreate_str_output(
         self, text_input: str, system_prompt: str, **merged_kwargs: Any
@@ -155,11 +279,12 @@ class GenericAPIAdapter(LLMInterface):
         # promoted, claimed, and silent.
         sink = get_active_token_sink()
         if sink is not None:
-            return await self._acreate_str_output_streaming(
-                sink, text_input, system_prompt, **merged_kwargs
-            )
+            async with _llm_concurrency_context():
+                return await self._acreate_str_output_streaming(
+                    sink, text_input, system_prompt, **merged_kwargs
+                )
 
-        async with llm_rate_limiter_context_manager():
+        async with _llm_concurrency_context(), llm_rate_limiter_context_manager():
             response = await litellm.acompletion(
                 model=self.model,
                 messages=[
@@ -171,9 +296,14 @@ class GenericAPIAdapter(LLMInterface):
                 api_version=self.api_version,
                 **merged_kwargs,
             )
-        # Guarded for the same reason the streaming loop is: content-filter
-        # refusals and some proxy error envelopes come back with choices == [],
-        # and a bare IndexError is not retryable and says nothing useful.
+        response = await _materialize_streaming_response(
+            response,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": text_input},
+            ],
+        )
+        response = _copy_reasoning_content_to_empty_content(response)
         if not response.choices:
             raise ValueError(f"{self.name} returned no choices for a plain-text completion")
         return response.choices[0].message.content or ""
@@ -239,25 +369,26 @@ class GenericAPIAdapter(LLMInterface):
             return await self.acreate_str_output(text_input, system_prompt, **merged_kwargs)
 
         try:
-            async with llm_rate_limiter_context_manager():
-                result = await self.aclient.chat.completions.create(
-                    model=self.model,
-                    messages=[
-                        {
-                            "role": "system",
-                            "content": system_prompt,
-                        },
-                        {
-                            "role": "user",
-                            "content": f"""{text_input}""",
-                        },
-                    ],
-                    max_retries=self.MAX_RETRIES,
-                    api_key=self.api_key,
-                    api_base=self.endpoint,
-                    response_model=response_model,
-                    **merged_kwargs,
-                )
+            async with _llm_concurrency_context():
+                async with llm_rate_limiter_context_manager():
+                    result = await self.aclient.chat.completions.create(
+                        model=self.model,
+                        messages=[
+                            {
+                                "role": "system",
+                                "content": system_prompt,
+                            },
+                            {
+                                "role": "user",
+                                "content": f"""{text_input}""",
+                            },
+                        ],
+                        max_retries=self.MAX_RETRIES,
+                        api_key=self.api_key,
+                        api_base=self.endpoint,
+                        response_model=response_model,
+                        **merged_kwargs,
+                    )
                 _enrich_llm_span(self.model, self.name)
                 return result
         except (
@@ -287,18 +418,12 @@ class GenericAPIAdapter(LLMInterface):
             fallback_llm_args = {**self._base_llm_args, **kwargs}
 
             try:
-                async with llm_rate_limiter_context_manager():
+                async with _llm_concurrency_context(), llm_rate_limiter_context_manager():
                     return await self.aclient.chat.completions.create(
                         model=fallback_model,
                         messages=[
-                            {
-                                "role": "system",
-                                "content": system_prompt,
-                            },
-                            {
-                                "role": "user",
-                                "content": f"""{text_input}""",
-                            },
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": f"""{text_input}"""},
                         ],
                         max_retries=self.MAX_RETRIES,
                         api_key=self.fallback_api_key,

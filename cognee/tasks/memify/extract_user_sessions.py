@@ -9,6 +9,47 @@ from cognee.modules.users.models import User
 from cognee.shared.logging_utils import get_logger
 
 logger = get_logger("extract_user_sessions")
+SESSION_WINDOW_MAX_CHARS = 16_000
+
+
+def _session_windows(user_id, session_id, entries, persisted_count):
+    """Yield bounded, ordered Q&A slices without dropping long individual entries."""
+    prefix = f"Session ID: {session_id}\n\n"
+    budget = max(1, SESSION_WINDOW_MAX_CHARS - len(prefix) - 80)
+    parts = []
+    parts_len = 0
+    previous_count = persisted_count
+
+    for count, qa_pair in enumerate(entries, start=persisted_count + 1):
+        entry = f"Question: {qa_pair.question}\n\nAnswer: {qa_pair.answer}\n\n"
+        if parts and parts_len + len(entry) > budget:
+            yield SessionPersistWindow(
+                user_id=user_id,
+                session_id=session_id,
+                text=prefix + "".join(parts),
+                persisted_qa_count=count - 1,
+                required_qa_count=previous_count,
+            )
+            previous_count = count - 1
+            parts = []
+            parts_len = 0
+
+        if len(entry) > budget:
+            raise CogneeSystemError(
+                message=f"Session Q&A entry {count} exceeds the {SESSION_WINDOW_MAX_CHARS}-character window limit",
+                log=False,
+            )
+        parts.append(entry)
+        parts_len += len(entry)
+
+    if parts:
+        yield SessionPersistWindow(
+            user_id=user_id,
+            session_id=session_id,
+            text=prefix + "".join(parts),
+            persisted_qa_count=persisted_count + len(entries),
+            required_qa_count=previous_count,
+        )
 
 
 async def extract_user_sessions(
@@ -19,7 +60,7 @@ async def extract_user_sessions(
     Extract not-yet-persisted Q&A entries for the current user via SessionManager.
 
     For each session, reads the persist watermark (see
-    ``session_persist_watermark``) and yields ONE window containing only the
+    ``session_persist_watermark``) and yields bounded windows containing only the
     Q&A entries above it, formatted as question/answer text. A session with no
     new entries yields nothing, so re-running improve() on an unchanged
     session does zero ingestion work. The watermark itself is advanced by
@@ -94,18 +135,12 @@ async def extract_user_sessions(
                         len(new_entries),
                         len(qa_data),
                     )
-                    session_string = f"Session ID: {session_id}\n\n"
-                    for qa_pair in new_entries:
-                        question = qa_pair.question
-                        answer = qa_pair.answer
-                        session_string += f"Question: {question}\n\nAnswer: {answer}\n\n"
-
-                    yield SessionPersistWindow(
-                        user_id=user_id,
-                        session_id=session_id,
-                        text=session_string,
-                        persisted_qa_count=len(qa_data),
-                    )
+                    for window in _session_windows(
+                        user_id, session_id, new_entries, persisted_count
+                    ):
+                        yield window
+                except CogneeSystemError:
+                    raise
                 except Exception as e:
                     logger.warning(f"Failed to extract session {session_id}: {e!s}", exc_info=True)
                     continue

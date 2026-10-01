@@ -2,12 +2,14 @@ import { collectRuntimeConfig, getServerBackendUrl } from "../serverRuntimeConfi
 
 describe("server backend URL resolution", () => {
   const original = {
+    internal: process.env.COGNEE_INTERNAL_API_URL,
     runtime: process.env.COGNEE_BACKEND_URL,
     buildTime: process.env.NEXT_PUBLIC_LOCAL_API_URL,
   };
 
   afterEach(() => {
     for (const [key, value] of [
+      ["COGNEE_INTERNAL_API_URL", original.internal],
       ["COGNEE_BACKEND_URL", original.runtime],
       ["NEXT_PUBLIC_LOCAL_API_URL", original.buildTime],
     ] as const) {
@@ -17,6 +19,7 @@ describe("server backend URL resolution", () => {
   });
 
   it("defaults to the local backend when nothing is configured", () => {
+    delete process.env.COGNEE_INTERNAL_API_URL;
     delete process.env.COGNEE_BACKEND_URL;
     delete process.env.NEXT_PUBLIC_LOCAL_API_URL;
 
@@ -41,6 +44,14 @@ describe("server backend URL resolution", () => {
     process.env.COGNEE_BACKEND_URL = "not-a-url";
 
     expect(() => getServerBackendUrl()).toThrow(/COGNEE_BACKEND_URL/);
+  });
+
+  it("keeps internal Docker routing separate from the browser URL", () => {
+    process.env.COGNEE_INTERNAL_API_URL = "http://api:8000/";
+    process.env.NEXT_PUBLIC_LOCAL_API_URL = "/cognee-api";
+    delete process.env.COGNEE_BACKEND_URL;
+    expect(getServerBackendUrl()).toBe("http://api:8000");
+    expect(collectRuntimeConfig()).toEqual({ backendUrl: null });
   });
 });
 

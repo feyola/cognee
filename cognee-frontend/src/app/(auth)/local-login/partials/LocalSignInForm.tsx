@@ -16,7 +16,7 @@ const DEFAULT_PASSWORD = "default_password";
 export default function LocalSignInForm() {
   const localApiUrl = getLocalApiUrl();
   const [email, setEmail] = useState(DEFAULT_EMAIL);
-  const [password, setPassword] = useState(DEFAULT_PASSWORD);
+  const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
@@ -125,10 +125,6 @@ export default function LocalSignInForm() {
             innerInput: "!text-[#EDECEA]",
           }}
         />
-
-        <Text size="xs" className="!text-[#EDECEA]/60 !font-light" mt={-4}>
-          Default credentials are pre-filled for local development
-        </Text>
 
         <Button
           type="submit"
