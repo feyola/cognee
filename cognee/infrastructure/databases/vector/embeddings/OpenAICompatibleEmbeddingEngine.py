@@ -310,4 +310,8 @@ class OpenAICompatibleEmbeddingEngine(EmbeddingEngine):
         model's own tokenizer and warns/falls back safely on mismatch (issue #3646).
         """
         logger.debug("Loading tokenizer for OpenAICompatibleEmbeddingEngine...")
-        return resolve_embedding_tokenizer(provider="openai_compatible", model=self.model)
+        return resolve_embedding_tokenizer(
+            provider="openai_compatible",
+            model=self.model,
+            huggingface_tokenizer=os.getenv("HUGGINGFACE_TOKENIZER") or None,
+        )
