@@ -9,9 +9,15 @@ from pydantic import Field
 
 from cognee import __version__ as cognee_version
 from cognee.api.DTO import ErrorResponse, InDTO, OutDTO
+from cognee.api.v1.search.chunk_record_dto import (
+    ChunkRecordsPayloadDTO,
+    ChunkRecordsResponseDTO,
+    render_chunk_records,
+)
 from cognee.context_global_variables import set_database_global_context_variables
 from cognee.exceptions import CogneeApiError
 from cognee.infrastructure.databases.unified import get_unified_engine
+from cognee.modules.retrieval.chunk_records import read_chunk_record_snapshots
 from cognee.modules.search.operations import get_history
 from cognee.modules.search.types import SearchResult, SearchType
 from cognee.modules.users.methods import get_authenticated_user
@@ -237,6 +243,34 @@ def get_search_router() -> APIRouter:
             )
         found_ids = {UUID(str(item.id)) for item in found}
         return [chunk_id for chunk_id in requested if chunk_id in found_ids]
+
+    @router.post(
+        "/chunk-records",
+        summary="Read exact persisted chunk evidence in one readable dataset",
+        response_model=ChunkRecordsResponseDTO,
+        responses={
+            400: {"model": ErrorResponse},
+            403: {"model": ErrorResponse},
+            413: {"model": ErrorResponse},
+            501: {"model": ErrorResponse},
+            502: {"model": ErrorResponse},
+        },
+    )
+    async def get_chunk_records(
+        payload: ChunkRecordsPayloadDTO,
+        user: User = Depends(get_authenticated_user),
+    ):
+        """Read-only exact records; no completion, neighborhood or storage rewrite.
+
+        Unknown/foreign IDs are omitted and reported in missingChunkIds. Clients
+        requiring complete evidence must reject missing records. Stored legacy
+        gaps remain null/empty, never synthesized. Mixed provenance scopes fail
+        without disclosing any records. UTF-8 JSON is capped at 1 MiB; no truncation.
+        """
+        records, missing = await read_chunk_record_snapshots(
+            user, payload.dataset_id, payload.chunk_ids
+        )
+        return render_chunk_records(payload.dataset_id, records, missing)
 
     @router.post(
         "",

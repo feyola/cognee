@@ -55,6 +55,7 @@ features.** See [Contributing](#-contributing-a-new-example) for the precise cat
 | [`temporal_recall.py`](guides/temporal_recall.py) | Time-bounded queries with `SearchType.TEMPORAL` |
 | [`references_example.py`](guides/references_example.py) | `include_references` — answers with evidence |
 | [`verify_chunk_identities.py`](guides/verify_chunk_identities.py) | Authenticated, bounded chunk-ID existence verification in one dataset |
+| [`verify_chunk_records.py`](guides/verify_chunk_records.py) | Exact persisted chunk bodies and provenance ([wire contract](guides/chunk_records.md)) |
 | [`nodeset_grouping_example.py`](guides/nodeset_grouping_example.py) | `node_set` grouping for filtered retrieval |
 | [`hybrid_retrieval_recall.py`](guides/hybrid_retrieval_recall.py) | `HYBRID_COMPLETION` — passage-focused vs graph-focused context for the same question |
 | [`fact_validity.py`](guides/fact_validity.py) | Fact validity windows: closing a fact with `close_node`, checking it with `is_valid` |
