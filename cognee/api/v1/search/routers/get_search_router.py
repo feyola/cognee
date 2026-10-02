@@ -9,11 +9,16 @@ from pydantic import Field
 
 from cognee import __version__ as cognee_version
 from cognee.api.DTO import ErrorResponse, InDTO, OutDTO
+from cognee.context_global_variables import set_database_global_context_variables
 from cognee.exceptions import CogneeApiError
+from cognee.infrastructure.databases.unified import get_unified_engine
 from cognee.modules.search.operations import get_history
 from cognee.modules.search.types import SearchResult, SearchType
 from cognee.modules.users.methods import get_authenticated_user
 from cognee.modules.users.models import User
+from cognee.modules.users.permissions.methods.get_specific_user_permission_datasets import (
+    get_specific_user_permission_datasets,
+)
 from cognee.shared.logging_utils import get_logger
 from cognee.shared.usage_logger import log_usage
 from cognee.shared.utils import send_telemetry
@@ -133,6 +138,15 @@ class SearchPayloadDTO(InDTO):
     )
 
 
+class ChunkIdentityPayloadDTO(InDTO):
+    dataset_id: UUID = Field(description="The single authorized dataset to verify against.")
+    chunk_ids: list[UUID] = Field(
+        min_length=1,
+        max_length=100,
+        description="Exact document-chunk UUIDs to look up; at most 100 per request.",
+    )
+
+
 def get_search_router() -> APIRouter:
     router = APIRouter()
 
@@ -192,6 +206,37 @@ def get_search_router() -> APIRouter:
                     detail=str(error),
                 ).model_dump(),
             )
+
+    @router.post(
+        "/chunk-identities",
+        summary="Verify exact chunk identities in one readable dataset",
+        response_model=list[UUID],
+        responses={403: {"model": ErrorResponse}, 422: {"model": ErrorResponse}},
+    )
+    async def verify_chunk_identities(
+        payload: ChunkIdentityPayloadDTO,
+        user: User = Depends(get_authenticated_user),
+    ):
+        """Return the requested IDs present in the authorized dataset's chunk index.
+
+        Missing or foreign-dataset IDs are omitted. A client validating a citation
+        set must require every requested ID to be returned. The response is unique,
+        in request order; no similarity search, completion or session write occurs.
+        Existence does not establish that an answer is supported by the chunk, nor
+        that the source is current. Authorization and backend failures propagate.
+        """
+        datasets = await get_specific_user_permission_datasets(
+            user.id, "read", [payload.dataset_id]
+        )
+        dataset = datasets[0]
+        requested = list(dict.fromkeys(payload.chunk_ids))
+        async with set_database_global_context_variables(dataset.id, dataset.owner_id):
+            unified = await get_unified_engine()
+            found = await unified.vector.retrieve(
+                "DocumentChunk_text", [str(chunk_id) for chunk_id in requested]
+            )
+        found_ids = {UUID(str(item.id)) for item in found}
+        return [chunk_id for chunk_id in requested if chunk_id in found_ids]
 
     @router.post(
         "",
