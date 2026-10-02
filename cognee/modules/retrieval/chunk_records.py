@@ -7,7 +7,10 @@ Adapters without this capability must fail explicitly, not invent provenance.
 
 from uuid import UUID
 
-from cognee.context_global_variables import set_database_global_context_variables
+from cognee.context_global_variables import (
+    backend_access_control_enabled,
+    set_database_global_context_variables,
+)
 from cognee.exceptions import CogneeApiError
 from cognee.infrastructure.databases.exceptions import UnsupportedProvenanceCapability
 from cognee.infrastructure.databases.graph import get_graph_engine
@@ -87,6 +90,10 @@ async def read_chunk_record_snapshots(
     dataset = datasets[0]
     requested = [str(chunk_id) for chunk_id in chunk_ids]
     try:
+        if not backend_access_control_enabled():
+            # Global storage cannot establish dataset membership for legacy
+            # snapshots with empty refs. Never disclose those by exact ID alone.
+            raise UnsupportedProvenanceCapability()
         async with set_database_global_context_variables(dataset.id, dataset.owner_id):
             graph = await get_graph_engine()
             reader = getattr(graph, "get_node_delete_data", None)

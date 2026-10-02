@@ -12,6 +12,9 @@ Request (camelCase or snake_case field names):
 
 Send 1–100 **unique canonical lowercase UUIDs**. Extra fields are rejected. The
 server checks read permission before selecting the dataset owner's graph backend.
+Dataset-isolated backend access control must be enabled. Global/unscoped backend
+mode is explicitly unsupported (HTTP501), because empty legacy provenance cannot
+prove dataset membership in shared storage. Read authorization still runs first.
 
 The response has `contractVersion: "chunk-records/v1"`, `datasetId`, `records`,
 and `missingChunkIds`. Records follow request order. Unknown IDs, including IDs

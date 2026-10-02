@@ -75,6 +75,7 @@ def lookup(monkeypatch):
             events.append(("exit", dataset_id, owner_id))
 
     monkeypatch.setattr(reader, "get_specific_user_permission_datasets", permission)
+    monkeypatch.setattr(reader, "backend_access_control_enabled", lambda: True)
     monkeypatch.setattr(reader, "set_database_global_context_variables", scope)
     monkeypatch.setattr(reader, "get_graph_engine", graph)
     app = FastAPI()
@@ -373,6 +374,16 @@ def test_unsupported_adapter_is_not_empty_fallback(lookup):
 def test_absent_native_capability_is_explicitly_unsupported(lookup):
     lookup.graph.return_value = SimpleNamespace()
     assert post(lookup).status_code == 501
+
+
+def test_unscoped_backend_is_rejected_before_graph_access(lookup, monkeypatch):
+    monkeypatch.setattr(reader, "backend_access_control_enabled", lambda: False)
+    response = post(lookup)
+    assert response.status_code == 501 and "records" not in response.json()
+    lookup.permission.assert_awaited_once()
+    lookup.graph.assert_not_awaited()
+    lookup.read.assert_not_awaited()
+    assert lookup.events == []
 
 
 def test_mixed_batch_never_discloses_even_the_valid_record(lookup):
