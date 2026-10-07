@@ -241,8 +241,8 @@ def get_cognify_router() -> APIRouter:
                 graph_model = graph_schema_to_graph_model(graph_model_schema)
 
             cognify_run = await cognee_cognify(
-                datasets,
-                user,
+                datasets=datasets,
+                user=user,
                 graph_model=graph_model,
                 config=config_to_use,
                 run_in_background=payload.run_in_background,
