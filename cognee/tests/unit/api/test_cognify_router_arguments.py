@@ -22,7 +22,7 @@ cognify_router_module = importlib.import_module("cognee.api.v1.cognify.routers.g
 
 
 @pytest.fixture
-def client():
+def client(monkeypatch):
     app = FastAPI()
     app.include_router(cognify_router_module.get_cognify_router(), prefix="/api/v1/cognify")
     user = SimpleNamespace(
@@ -32,7 +32,7 @@ def client():
     async def override_get_authenticated_user():
         return user
 
-    cognify_router_module.send_telemetry = lambda *a, **k: None
+    monkeypatch.setattr(cognify_router_module, "send_telemetry", lambda *a, **k: None)
     app.dependency_overrides[get_authenticated_user] = override_get_authenticated_user
     with TestClient(app) as test_client:
         yield test_client, user
